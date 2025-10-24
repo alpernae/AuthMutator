@@ -122,6 +122,12 @@ When **Preview in Proxy** is active, the original traffic still flows unchanged 
 - **Preview mode not showing responses** – synthetic replay requires external network connectivity; errors are logged in Burp's Extender output.
 - **State changes not persisting** – confirm Burp has permission to write the home directory; check for errors about `.AuthMutator.json` in the output log.
 
+## Known Issues
+
+- **Modified Response tab appears empty** – In some cases, when replace rules are applied and the modified request is sent, the Modified Response tab may appear empty in the extension UI, even though the response is successfully received and visible in Repeater or the Burp HTTP history. This appears to affect various response types and is under active investigation. 
+  - **Workaround**: Check the Original Response tab (which may show the response when the modified request was sent) or resend the request in Repeater to view the actual response. 
+  - **Diagnosis**: Debug logging has been added to trace the request/response flow - check Burp's Extension Output tab (Extensions → Auth Mutator → Output) for diagnostic information to help identify the root cause.
+
 ## License
 
 Auth Mutator is distributed under the terms of the [GNU General Public License v3.0](LICENSE). You may redistribute and/or modify it under those terms.

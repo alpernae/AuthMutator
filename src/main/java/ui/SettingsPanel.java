@@ -23,6 +23,7 @@ public class SettingsPanel extends JPanel {
     private JButton safeModeBtn;
     private JCheckBox unauthenticatedTestingCheckbox;
     private JCheckBox applyRulesToUnauthCheckbox;
+    private JCheckBox excludeStaticFilesCheckbox;
 
     public SettingsPanel(MontoyaApi api, ExtensionConfig config, Runnable onConfigChanged) {
         this.api = api;
@@ -59,6 +60,16 @@ public class SettingsPanel extends JPanel {
             notifyConfigChanged();
         });
         scopePanel.add(onlyInScopeCheckbox);
+
+        excludeStaticFilesCheckbox = new JCheckBox("Exclude static files (images, CSS, JS, fonts, audio, video)");
+        excludeStaticFilesCheckbox.setSelected(config.isExcludeStaticFiles());
+        excludeStaticFilesCheckbox.setToolTipText("Skip interception and rule application for common static file types");
+        excludeStaticFilesCheckbox.addActionListener(e -> {
+            config.setExcludeStaticFiles(excludeStaticFilesCheckbox.isSelected());
+            api.logging().logToOutput("Exclude static files: " + config.isExcludeStaticFiles());
+            notifyConfigChanged();
+        });
+        scopePanel.add(excludeStaticFilesCheckbox);
 
         settingsContainer.add(scopePanel);
         settingsContainer.add(Box.createVerticalStrut(10));
@@ -209,6 +220,7 @@ public class SettingsPanel extends JPanel {
 
     public void refreshFromConfig() {
         onlyInScopeCheckbox.setSelected(config.isOnlyInScope());
+        excludeStaticFilesCheckbox.setSelected(config.isExcludeStaticFiles());
         interceptEnabledCheckbox.setSelected(config.isInterceptEnabled());
         autoModifyCheckbox.setSelected(config.isAutoModifyRequests());
         applyToProxyCheckbox.setSelected(config.isApplyToProxy());

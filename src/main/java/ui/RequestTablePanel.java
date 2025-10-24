@@ -75,6 +75,30 @@ public class RequestTablePanel extends JPanel {
             }
         };
         sorter = new TableRowSorter<>(requestLogModel);
+        
+        // Set up comparators for each column to prevent null comparator exceptions
+        sorter.setComparator(0, java.util.Comparator.comparingInt(o -> (Integer) o));  // ID
+        sorter.setComparator(1, java.util.Comparator.comparing(String::valueOf));       // Method
+        sorter.setComparator(2, java.util.Comparator.comparing(String::valueOf));       // URL
+        sorter.setComparator(3, (o1, o2) -> {                                           // Status
+            Integer i1 = (Integer) o1;
+            Integer i2 = (Integer) o2;
+            if (i1 == null && i2 == null) return 0;
+            if (i1 == null) return 1;
+            if (i2 == null) return -1;
+            return i1.compareTo(i2);
+        });
+        sorter.setComparator(4, (o1, o2) -> {                                           // Modified Status
+            Integer i1 = (Integer) o1;
+            Integer i2 = (Integer) o2;
+            if (i1 == null && i2 == null) return 0;
+            if (i1 == null) return 1;
+            if (i2 == null) return -1;
+            return i1.compareTo(i2);
+        });
+        sorter.setComparator(5, java.util.Comparator.comparing(String::valueOf));       // Cookies
+        sorter.setComparator(6, java.util.Comparator.comparing(String::valueOf));       // Parameters
+        
         requestTable.setRowSorter(sorter);
         requestTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         requestTable.setAutoResizeMode(JTable.AUTO_RESIZE_ALL_COLUMNS);
@@ -202,6 +226,9 @@ public class RequestTablePanel extends JPanel {
                 DefaultTableCellRenderer centerRenderer = new DefaultTableCellRenderer();
                 centerRenderer.setHorizontalAlignment(SwingConstants.CENTER);
                 requestTable.getColumnModel().getColumn(7).setCellRenderer(centerRenderer);
+                
+                // Set comparator for Unauth column
+                sorter.setComparator(7, java.util.Comparator.comparing(o -> (Boolean) o));
             }
 
             DefaultTableCellRenderer leftRenderer = new DefaultTableCellRenderer();
@@ -264,18 +291,41 @@ public class RequestTablePanel extends JPanel {
                 HttpResponse modifiedResponse = entry.getModifiedResponse();
                 HttpResponse unauthResponse = entry.getUnauthResponse();
 
+                // Debug logging
+                api.logging().logToOutput("UI Display - Entry ID: " + entry.getId() + 
+                                        ", wasModifiedSent: " + entry.wasModifiedRequestSent() +
+                                        ", originalResponse: " + (originalResponse != null ? "present (" + originalResponse.statusCode() + ")" : "null") +
+                                        ", modifiedResponse: " + (modifiedResponse != null ? "present (" + modifiedResponse.statusCode() + ")" : "null") +
+                                        ", getResponse: " + (entry.getResponse() != null ? "present (" + entry.getResponse().statusCode() + ")" : "null"));
+
+                // If the modified request was sent, show its response in the original tab
+                // because we don't have the "true" original response (we never sent the original request)
                 if (originalResponse != null) {
                     originalResponseEditor.setResponse(originalResponse);
+                } else if (entry.wasModifiedRequestSent() && modifiedResponse != null) {
+                    // Show modified response in original tab when modified request was actually sent
+                    originalResponseEditor.setResponse(modifiedResponse);
                 } else if (entry.getResponse() != null) {
                     originalResponseEditor.setResponse(entry.getResponse());
                 }
 
                 if (modifiedResponse != null) {
+                    api.logging().logToOutput("  Setting modified response editor (case 1): status=" + modifiedResponse.statusCode());
                     modifiedResponseEditor.setResponse(modifiedResponse);
                     responseTabbedPane.setEnabledAt(1, true);
+                } else if (entry.wasModifiedRequestSent() && entry.getResponse() != null) {
+                    // If modified request was sent but modifiedResponse is somehow null,
+                    // the response we have IS the modified response
+                    api.logging().logToOutput("  Setting modified response editor (case 2): status=" + entry.getResponse().statusCode());
+                    modifiedResponseEditor.setResponse(entry.getResponse());
+                    responseTabbedPane.setEnabledAt(1, true);
                 } else {
+                    api.logging().logToOutput("  Modified response tab disabled or cleared");
                     if (entry.getResponse() != null) {
                         modifiedResponseEditor.setResponse(entry.getResponse());
+                    } else {
+                        // Clear the editor to show it's empty
+                        modifiedResponseEditor.setResponse(null);
                     }
                     responseTabbedPane.setEnabledAt(1, false);
                 }

@@ -9,6 +9,7 @@ public class ExtensionConfig {
     private boolean autoModifyRequests;
     private boolean unauthenticatedTesting;
     private boolean applyRulesToUnauthenticatedRequest;
+    private boolean excludeStaticFiles;
 
     // Per-tool application flags
     private boolean applyToProxy;
@@ -27,6 +28,7 @@ public class ExtensionConfig {
     this.autoModifyRequests = true;
     this.unauthenticatedTesting = false;
     this.applyRulesToUnauthenticatedRequest = false;
+    this.excludeStaticFiles = true;
 
         // Sensible defaults: don't affect browser traffic by default
         this.applyToProxy = false;
@@ -131,6 +133,14 @@ public class ExtensionConfig {
 
     public void setMaxLogEntries(int maxLogEntries) {
         this.maxLogEntries = Math.max(100, maxLogEntries);
+    }
+
+    public boolean isExcludeStaticFiles() {
+        return excludeStaticFiles;
+    }
+
+    public void setExcludeStaticFiles(boolean excludeStaticFiles) {
+        this.excludeStaticFiles = excludeStaticFiles;
     }
 
     // Helper: should we apply to a given tool?

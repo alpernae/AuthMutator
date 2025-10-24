@@ -90,6 +90,8 @@ public class RequestHandler implements HttpHandler {
 
     @Override
     public RequestToBeSentAction handleHttpRequestToBeSent(HttpRequestToBeSent requestToBeSent) {
+        api.logging().logToOutput(">>> REQUEST HANDLER CALLED - URL: " + requestToBeSent.url() + ", enabled: " + config.isExtensionEnabled());
+        
         // Check if extension is enabled
         if (!config.isExtensionEnabled()) {
             return RequestToBeSentAction.continueWith(requestToBeSent);
@@ -97,6 +99,12 @@ public class RequestHandler implements HttpHandler {
         
         // Check if we should process this request
         if (!config.isInterceptEnabled()) {
+            return RequestToBeSentAction.continueWith(requestToBeSent);
+        }
+
+        // Skip static files if configured
+        if (config.isExcludeStaticFiles() && isStaticFile(requestToBeSent)) {
+            api.logging().logToOutput("Skipping static file: " + requestToBeSent.path());
             return RequestToBeSentAction.continueWith(requestToBeSent);
         }
 
@@ -159,6 +167,13 @@ public class RequestHandler implements HttpHandler {
 
         boolean shouldTrack = transformsAllowed && (pending.hasModifiedChange() || pending.hasUnauthVariant() || proxyPreview);
 
+        api.logging().logToOutput("Request handler - messageId: " + messageId + 
+                                ", toolEnabled: " + toolEnabled + 
+                                ", proxyPreview: " + proxyPreview +
+                                ", shouldTrack: " + shouldTrack + 
+                                ", modifiedRequestSent: " + modifiedRequestSent +
+                                ", hasModifiedChange: " + pending.hasModifiedChange());
+
         if (proxyPreview && (pending.hasModifiedChange() || pending.hasUnauthVariant())) {
             int id = requestCounter.getAndIncrement();
             RequestLogEntry entry = new RequestLogEntry(
@@ -178,6 +193,9 @@ public class RequestHandler implements HttpHandler {
 
         if (shouldTrack) {
             pendingByMessageId.put(messageId, pending);
+            api.logging().logToOutput("  Added to pending map - messageId: " + messageId);
+        } else {
+            api.logging().logToOutput("  NOT tracked - transformsAllowed: " + transformsAllowed);
         }
 
         if (pending.hasUnauthVariant()) {
@@ -214,6 +232,8 @@ public class RequestHandler implements HttpHandler {
 
     @Override
     public ResponseReceivedAction handleHttpResponseReceived(HttpResponseReceived responseReceived) {
+        api.logging().logToOutput(">>> RESPONSE HANDLER CALLED - URL: " + responseReceived.initiatingRequest().url() + ", status: " + responseReceived.statusCode());
+        
         // Check if extension is enabled
         if (!config.isExtensionEnabled()) {
             return ResponseReceivedAction.continueWith(responseReceived);
@@ -224,6 +244,11 @@ public class RequestHandler implements HttpHandler {
             return ResponseReceivedAction.continueWith(responseReceived);
         }
 
+        // Skip static files if configured
+        if (config.isExcludeStaticFiles() && isStaticFileResponse(responseReceived)) {
+            return ResponseReceivedAction.continueWith(responseReceived);
+        }
+
         // Respect per-tool settings
         ToolType toolType = responseReceived.toolSource() != null ? responseReceived.toolSource().toolType() : null;
         boolean toolEnabled = config.isToolEnabled(toolType);
@@ -231,6 +256,8 @@ public class RequestHandler implements HttpHandler {
 
         int messageId = responseReceived.messageId();
         Pending pending = pendingByMessageId.remove(messageId);
+
+        api.logging().logToOutput("Response handler - messageId: " + messageId + ", pending: " + (pending != null ? "found" : "NOT FOUND"));
 
         if (pending != null && (toolEnabled || proxyPreview)) {
             HttpResponse httpResponse = responseReceived;
@@ -262,8 +289,24 @@ public class RequestHandler implements HttpHandler {
                 boolean shouldLog = pending.hasModifiedChange() || pending.hasUnauthVariant();
                 if (shouldLog) {
                     int id = requestCounter.getAndIncrement();
+                    // When modified request was sent, the response we receive is the modified response
+                    // When original request was sent, the response we receive is the original response
                     HttpResponse originalResponse = pending.modifiedSent ? null : httpResponse;
                     HttpResponse modifiedResponse = pending.modifiedSent ? httpResponse : null;
+                    
+                    api.logging().logToOutput("Response received - modifiedSent: " + pending.modifiedSent + 
+                                            ", hasModifiedChange: " + pending.hasModifiedChange() + 
+                                            ", originalResponse: " + (originalResponse != null ? "present" : "null") + 
+                                            ", modifiedResponse: " + (modifiedResponse != null ? "present" : "null") +
+                                            ", response status: " + (httpResponse != null ? httpResponse.statusCode() : "null") +
+                                            ", response body length: " + (httpResponse != null ? httpResponse.body().length() : 0));
+                    
+                    if (httpResponse != null && httpResponse.statusCode() == 202) {
+                        api.logging().logToOutput("  *** 202 RESPONSE DETECTED ***");
+                        api.logging().logToOutput("  httpResponse object: " + httpResponse);
+                        api.logging().logToOutput("  Will be stored as " + (pending.modifiedSent ? "MODIFIED" : "ORIGINAL") + " response");
+                    }
+                    
                     RequestLogEntry entry = new RequestLogEntry(
                             id,
                             pending.original,
@@ -994,4 +1037,137 @@ public class RequestHandler implements HttpHandler {
             return null;
         }
     }
+
+    /**
+     * Checks if the request is for a static file (images, CSS, JS, fonts, audio, video, etc.)
+     * based on URL path extension and common content-type indicators.
+     */
+    private boolean isStaticFile(HttpRequestToBeSent request) {
+        String path = request.path().toLowerCase();
+        
+        // Also check the full URL in case the path doesn't include the file extension
+        String url = request.url().toLowerCase();
+        
+        // Check for common static file extensions
+        String[] staticExtensions = {
+            // Images
+            ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".ico", ".webp", ".tiff", ".tif",
+            // CSS/Styles
+            ".css", ".scss", ".sass", ".less",
+            // JavaScript
+            ".js", ".jsx", ".ts", ".tsx", ".mjs",
+            // Fonts
+            ".woff", ".woff2", ".ttf", ".otf", ".eot",
+            // Audio
+            ".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac", ".wma",
+            // Video
+            ".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".mkv", ".m4v",
+            // Documents (often static)
+            ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+            // Archives
+            ".zip", ".rar", ".tar", ".gz", ".7z",
+            // Other common static resources
+            ".swf", ".xml", ".json", ".map", ".manifest"
+        };
+        
+        // Check path first (most common case)
+        for (String ext : staticExtensions) {
+            if (path.endsWith(ext)) {
+                return true;
+            }
+        }
+        
+        // Check URL (in case path is just "/" but URL has extension)
+        for (String ext : staticExtensions) {
+            // Check if URL ends with extension or has it before query string
+            if (url.endsWith(ext)) {
+                return true;
+            }
+            // Check for extension before query string (e.g., /path/image.jpg?version=1)
+            int queryIndex = url.indexOf('?');
+            if (queryIndex > 0) {
+                String urlBeforeQuery = url.substring(0, queryIndex);
+                if (urlBeforeQuery.endsWith(ext)) {
+                    return true;
+                }
+            }
+        }
+        
+        // Check for query-string-based static files (e.g., /asset?file=image.png)
+        if (path.contains("?")) {
+            String queryPart = path.substring(path.indexOf("?"));
+            for (String ext : staticExtensions) {
+                if (queryPart.contains(ext)) {
+                    return true;
+                }
+            }
+        }
+        
+        return false;
+    }
+
+    /**
+     * Checks if the response is for a static file based on the initiating request path.
+     */
+    private boolean isStaticFileResponse(HttpResponseReceived responseReceived) {
+        String path = responseReceived.initiatingRequest().path().toLowerCase();
+        String url = responseReceived.initiatingRequest().url().toLowerCase();
+        
+        // Check for common static file extensions
+        String[] staticExtensions = {
+            // Images
+            ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".ico", ".webp", ".tiff", ".tif",
+            // CSS/Styles
+            ".css", ".scss", ".sass", ".less",
+            // JavaScript
+            ".js", ".jsx", ".ts", ".tsx", ".mjs",
+            // Fonts
+            ".woff", ".woff2", ".ttf", ".otf", ".eot",
+            // Audio
+            ".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac", ".wma",
+            // Video
+            ".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".mkv", ".m4v",
+            // Documents (often static)
+            ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+            // Archives
+            ".zip", ".rar", ".tar", ".gz", ".7z",
+            // Other common static resources
+            ".swf", ".xml", ".json", ".map", ".manifest"
+        };
+        
+        // Check path first
+        for (String ext : staticExtensions) {
+            if (path.endsWith(ext)) {
+                return true;
+            }
+        }
+        
+        // Check URL
+        for (String ext : staticExtensions) {
+            if (url.endsWith(ext)) {
+                return true;
+            }
+            // Check for extension before query string
+            int queryIndex = url.indexOf('?');
+            if (queryIndex > 0) {
+                String urlBeforeQuery = url.substring(0, queryIndex);
+                if (urlBeforeQuery.endsWith(ext)) {
+                    return true;
+                }
+            }
+        }
+        
+        // Check for query-string-based static files
+        if (path.contains("?")) {
+            String queryPart = path.substring(path.indexOf("?"));
+            for (String ext : staticExtensions) {
+                if (queryPart.contains(ext)) {
+                    return true;
+                }
+            }
+        }
+        
+        return false;
+    }
 }
+

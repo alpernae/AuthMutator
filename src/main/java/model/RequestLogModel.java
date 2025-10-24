@@ -15,18 +15,26 @@ public class RequestLogModel extends AbstractTableModel {
     }
 
     public void addEntry(RequestLogEntry entry) {
-        int row = entries.size();
-        entries.add(entry);
-        fireTableRowsInserted(row, row);
-        enforceLimit();
+        javax.swing.SwingUtilities.invokeLater(() -> {
+            System.out.println(">>> ADDING ENTRY TO TABLE - ID: " + entry.getId() + 
+                             ", URL: " + entry.getUrl() + 
+                             ", modifiedResponse: " + (entry.getModifiedResponse() != null ? "present" : "NULL") +
+                             ", originalResponse: " + (entry.getOriginalResponse() != null ? "present" : "NULL"));
+            int row = entries.size();
+            entries.add(entry);
+            fireTableRowsInserted(row, row);
+            enforceLimit();
+        });
     }
 
     public void clearEntries() {
-        int size = entries.size();
-        if (size > 0) {
-            entries.clear();
-            fireTableRowsDeleted(0, size - 1);
-        }
+        javax.swing.SwingUtilities.invokeLater(() -> {
+            int size = entries.size();
+            if (size > 0) {
+                entries.clear();
+                fireTableRowsDeleted(0, size - 1);
+            }
+        });
     }
 
     public RequestLogEntry getEntry(int row) {
@@ -41,15 +49,24 @@ public class RequestLogModel extends AbstractTableModel {
     }
 
     public void replaceById(int id, RequestLogEntry updated) {
-        for (int i = 0; i < entries.size(); i++) {
-            if (entries.get(i).getId() == id) {
-                entries.set(i, updated);
-                fireTableRowsUpdated(i, i);
-                return;
+        javax.swing.SwingUtilities.invokeLater(() -> {
+            for (int i = 0; i < entries.size(); i++) {
+                if (entries.get(i).getId() == id) {
+                    entries.set(i, updated);
+                    fireTableRowsUpdated(i, i);
+                    return;
+                }
             }
-        }
-        // If not found, append
-        addEntry(updated);
+            // If not found, append (already wrapped in invokeLater in addEntry)
+            addEntryInternal(updated);
+        });
+    }
+
+    private void addEntryInternal(RequestLogEntry entry) {
+        int row = entries.size();
+        entries.add(entry);
+        fireTableRowsInserted(row, row);
+        enforceLimit();
     }
 
     public RequestLogEntry findById(int id) {
@@ -114,7 +131,7 @@ public class RequestLogModel extends AbstractTableModel {
             return;
         }
         this.maxEntries = normalized;
-        enforceLimit();
+        javax.swing.SwingUtilities.invokeLater(this::enforceLimit);
     }
 
     public int getMaxEntries() {
@@ -125,8 +142,10 @@ public class RequestLogModel extends AbstractTableModel {
         if (this.showUnauthColumn == show) {
             return;
         }
-        this.showUnauthColumn = show;
-        fireTableStructureChanged();
+        javax.swing.SwingUtilities.invokeLater(() -> {
+            this.showUnauthColumn = show;
+            fireTableStructureChanged();
+        });
     }
 
     public boolean isShowUnauthColumn() {

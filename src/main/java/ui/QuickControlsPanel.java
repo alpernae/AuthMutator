@@ -13,6 +13,7 @@ public class QuickControlsPanel extends JPanel {
     private final JCheckBox onlyInScopeCheckbox;
     private final JCheckBox unauthTestingCheckbox;
     private final JCheckBox applyRulesToUnauthCheckbox;
+    private final JCheckBox excludeStaticFilesCheckbox;
     private final Runnable onConfigChanged;
 
     public QuickControlsPanel(ExtensionConfig config, Runnable onConfigChanged) {
@@ -45,6 +46,14 @@ public class QuickControlsPanel extends JPanel {
             signalConfigChanged();
         });
 
+        excludeStaticFilesCheckbox = new JCheckBox("Exclude static files");
+        excludeStaticFilesCheckbox.setSelected(config.isExcludeStaticFiles());
+        excludeStaticFilesCheckbox.setToolTipText("Skip images, CSS, JS, fonts, audio, video files");
+        excludeStaticFilesCheckbox.addActionListener(e -> {
+            config.setExcludeStaticFiles(excludeStaticFilesCheckbox.isSelected());
+            signalConfigChanged();
+        });
+
         applyRulesToUnauthCheckbox = new JCheckBox("Apply rules to unauth request");
         applyRulesToUnauthCheckbox.setSelected(config.isApplyRulesToUnauthenticatedRequest());
         applyRulesToUnauthCheckbox.addActionListener(e -> {
@@ -68,6 +77,7 @@ public class QuickControlsPanel extends JPanel {
         leftPanel.add(affectProxyCheckbox);
         leftPanel.add(previewProxyCheckbox);
         leftPanel.add(onlyInScopeCheckbox);
+        leftPanel.add(excludeStaticFilesCheckbox);
     leftPanel.add(unauthTestingCheckbox);
     leftPanel.add(applyRulesToUnauthCheckbox);
 
@@ -83,6 +93,7 @@ public class QuickControlsPanel extends JPanel {
             affectProxyCheckbox.setEnabled(enabled);
             previewProxyCheckbox.setEnabled(enabled);
             onlyInScopeCheckbox.setEnabled(enabled);
+            excludeStaticFilesCheckbox.setEnabled(enabled);
             unauthTestingCheckbox.setEnabled(enabled);
             applyRulesToUnauthCheckbox.setEnabled(enabled && unauthTestingCheckbox.isSelected());
             signalConfigChanged();
@@ -92,6 +103,7 @@ public class QuickControlsPanel extends JPanel {
         affectProxyCheckbox.setEnabled(config.isExtensionEnabled());
         previewProxyCheckbox.setEnabled(config.isExtensionEnabled());
         onlyInScopeCheckbox.setEnabled(config.isExtensionEnabled());
+        excludeStaticFilesCheckbox.setEnabled(config.isExtensionEnabled());
         boolean extensionEnabled = config.isExtensionEnabled();
         unauthTestingCheckbox.setEnabled(extensionEnabled);
         applyRulesToUnauthCheckbox.setEnabled(extensionEnabled && unauthTestingCheckbox.isSelected());
@@ -105,11 +117,13 @@ public class QuickControlsPanel extends JPanel {
         affectProxyCheckbox.setSelected(config.isApplyToProxy());
         previewProxyCheckbox.setSelected(config.isPreviewInProxy());
         onlyInScopeCheckbox.setSelected(config.isOnlyInScope());
+        excludeStaticFilesCheckbox.setSelected(config.isExcludeStaticFiles());
         unauthTestingCheckbox.setSelected(config.isUnauthenticatedTesting());
         applyRulesToUnauthCheckbox.setSelected(config.isApplyRulesToUnauthenticatedRequest());
         affectProxyCheckbox.setEnabled(config.isExtensionEnabled());
         previewProxyCheckbox.setEnabled(config.isExtensionEnabled());
         onlyInScopeCheckbox.setEnabled(config.isExtensionEnabled());
+        excludeStaticFilesCheckbox.setEnabled(config.isExtensionEnabled());
         boolean extensionEnabled = config.isExtensionEnabled();
         unauthTestingCheckbox.setEnabled(extensionEnabled);
         applyRulesToUnauthCheckbox.setEnabled(extensionEnabled && unauthTestingCheckbox.isSelected());
