@@ -7,23 +7,33 @@ import java.awt.*;
 
 public class QuickControlsPanel extends JPanel {
     private final ExtensionConfig config;
-    private final JToggleButton enableButton;
-    private final JCheckBox affectProxyCheckbox;
-    private final JCheckBox previewProxyCheckbox;
-    private final JCheckBox onlyInScopeCheckbox;
-    private final JCheckBox unauthTestingCheckbox;
-    private final JCheckBox applyRulesToUnauthCheckbox;
-    private final JCheckBox excludeStaticFilesCheckbox;
+    private JToggleButton enableButton;
+    private JCheckBox affectProxyCheckbox;
+    private JCheckBox previewProxyCheckbox;
+    private JCheckBox onlyInScopeCheckbox;
+    private JCheckBox unauthTestingCheckbox;
+    private JCheckBox applyRulesToUnauthCheckbox;
+    private JCheckBox excludeStaticFilesCheckbox;
     private final Runnable onConfigChanged;
+    private final Runnable onImport;
+    private final Runnable onExport;
 
-    public QuickControlsPanel(ExtensionConfig config, Runnable onConfigChanged) {
+    public QuickControlsPanel(ExtensionConfig config, Runnable onConfigChanged, Runnable onImport, Runnable onExport) {
         this.config = config;
         this.onConfigChanged = onConfigChanged;
+        this.onImport = onImport;
+        this.onExport = onExport;
         setLayout(new BorderLayout());
-        setBorder(BorderFactory.createTitledBorder("Quick Controls"));
+        setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createTitledBorder("Quick Controls"),
+                BorderFactory.createEmptyBorder(5, 5, 5, 5)));
 
-    // Panel for checkboxes (left)
-    JPanel leftPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+        createLayout();
+    }
+
+    private void createLayout() {
+        // Panel for checkboxes (left)
+        JPanel leftPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 15, 0));
 
         affectProxyCheckbox = new JCheckBox("Affect Proxy (modify browser traffic)");
         affectProxyCheckbox.setSelected(config.isApplyToProxy());
@@ -78,13 +88,40 @@ public class QuickControlsPanel extends JPanel {
         leftPanel.add(previewProxyCheckbox);
         leftPanel.add(onlyInScopeCheckbox);
         leftPanel.add(excludeStaticFilesCheckbox);
-    leftPanel.add(unauthTestingCheckbox);
-    leftPanel.add(applyRulesToUnauthCheckbox);
+        leftPanel.add(unauthTestingCheckbox);
+        leftPanel.add(applyRulesToUnauthCheckbox);
 
-        // Main enable/disable toggle button (right)
+        // Right panel for Actions and Toggle
+        JPanel rightPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+
+        // Import/Export Buttons
+        JButton importBtn = new JButton("Import State"); // Standard swing button or PrimaryButton? Let's use JButton
+                                                         // for now or PrimaryButton if visible.
+        // PrimaryButton might be too colorful if we have many. Let's make them look
+        // decent.
+        // I'll stick to JButton to avoid import issues if PrimaryButton isn't imported,
+        // but PrimaryButton is in ui package.
+        // Let's use PrimaryButton for consistency if I import it.
+        // QuickControlsPanel currently doesn't import PrimaryButton. I'll use JButton.
+        importBtn.setMargin(new Insets(2, 6, 2, 6));
+        importBtn.addActionListener(e -> {
+            if (onImport != null)
+                onImport.run();
+        });
+
+        JButton exportBtn = new JButton("Export State");
+        exportBtn.setMargin(new Insets(2, 6, 2, 6));
+        exportBtn.addActionListener(e -> {
+            if (onExport != null)
+                onExport.run();
+        });
+
+        // Enable Toggle
         enableButton = new JToggleButton("Extension: ENABLED");
         enableButton.setSelected(config.isExtensionEnabled());
         enableButton.setOpaque(true);
+        enableButton.setMargin(new Insets(4, 10, 4, 10)); // Bigger button
+        enableButton.setFocusPainted(false);
         enableButton.addActionListener(e -> {
             boolean enabled = enableButton.isSelected();
             config.setExtensionEnabled(enabled);
@@ -108,8 +145,14 @@ public class QuickControlsPanel extends JPanel {
         unauthTestingCheckbox.setEnabled(extensionEnabled);
         applyRulesToUnauthCheckbox.setEnabled(extensionEnabled && unauthTestingCheckbox.isSelected());
 
-        add(leftPanel, BorderLayout.WEST);
-        add(enableButton, BorderLayout.EAST);
+        rightPanel.add(importBtn);
+        rightPanel.add(exportBtn);
+        // Spacer
+        rightPanel.add(Box.createHorizontalStrut(10));
+        rightPanel.add(enableButton);
+
+        add(leftPanel, BorderLayout.CENTER); // Changed to CENTER so it takes space
+        add(rightPanel, BorderLayout.EAST);
     }
 
     public void refreshFromConfig() {
@@ -134,15 +177,15 @@ public class QuickControlsPanel extends JPanel {
         boolean enabled = enableButton.isSelected();
         enableButton.setText(enabled ? "Extension: ENABLED" : "Extension: DISABLED");
         enableButton.setBackground(enabled ? new Color(144, 238, 144) : new Color(255, 160, 160));
-    enableButton.setForeground(shouldUseDarkText() ? Color.BLACK : Color.DARK_GRAY);
+        enableButton.setForeground(shouldUseDarkText() ? Color.BLACK : Color.DARK_GRAY);
     }
 
     private boolean shouldUseDarkText() {
         Color bg = getBackground();
         int brightness = (int) Math.sqrt(
                 bg.getRed() * bg.getRed() * .241 +
-                bg.getGreen() * bg.getGreen() * .691 +
-                bg.getBlue() * bg.getBlue() * .068);
+                        bg.getGreen() * bg.getGreen() * .691 +
+                        bg.getBlue() * bg.getBlue() * .068);
         return brightness < 160;
     }
 

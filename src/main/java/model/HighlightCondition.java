@@ -1,8 +1,6 @@
 package model;
 
 import burp.api.montoya.http.HttpService;
-import burp.api.montoya.http.message.params.HttpParameter;
-import burp.api.montoya.http.message.params.HttpParameterType;
 import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
 
@@ -30,6 +28,11 @@ public class HighlightCondition {
         public String getLabel() {
             return label;
         }
+
+        @Override
+        public String toString() {
+            return label;
+        }
     }
 
     public enum MatchPart {
@@ -42,7 +45,8 @@ public class HighlightCondition {
         DOMAIN_NAME("Domain Name"),
         PROTOCOL("Protocol"),
         HTTP_METHOD("HTTP Method"),
-        FILE_EXTENSION("File Extension");
+        FILE_EXTENSION("File Extension"),
+        USER_ROLE("User Role"); // Added
 
         private final String label;
 
@@ -56,6 +60,11 @@ public class HighlightCondition {
 
         public boolean supportsNumericComparison() {
             return this == REQUEST_LENGTH || this == RESPONSE_LENGTH || this == STATUS_CODE;
+        }
+
+        @Override
+        public String toString() {
+            return label;
         }
     }
 
@@ -86,25 +95,32 @@ public class HighlightCondition {
         public boolean requiresNumericComparison() {
             return this == GREATER_THAN || this == LESS_THAN;
         }
+
+        @Override
+        public String toString() {
+            return label;
+        }
     }
 
     private MessageVersion messageVersion;
     private MatchPart matchPart;
     private Relationship relationship;
     private String matchValue;
+    private String targetRole;
 
     public HighlightCondition() {
         this(MessageVersion.ORIGINAL, MatchPart.STRING_IN_REQUEST, Relationship.CONTAINS, "");
     }
 
     public HighlightCondition(MessageVersion messageVersion,
-                              MatchPart matchPart,
-                              Relationship relationship,
-                              String matchValue) {
+            MatchPart matchPart,
+            Relationship relationship,
+            String matchValue) {
         this.messageVersion = Objects.requireNonNull(messageVersion);
         this.matchPart = Objects.requireNonNull(matchPart);
         this.relationship = Objects.requireNonNull(relationship);
         this.matchValue = matchValue == null ? "" : matchValue;
+        this.targetRole = "";
     }
 
     public MessageVersion getMessageVersion() {
@@ -139,16 +155,35 @@ public class HighlightCondition {
         this.matchValue = matchValue == null ? "" : matchValue;
     }
 
+    public String getTargetRole() {
+        return targetRole;
+    }
+
+    public void setTargetRole(String targetRole) {
+        this.targetRole = targetRole;
+    }
+
     public HighlightCondition copy() {
-        return new HighlightCondition(messageVersion, matchPart, relationship, matchValue);
+        HighlightCondition copy = new HighlightCondition(messageVersion, matchPart, relationship, matchValue);
+        copy.setTargetRole(targetRole);
+        return copy;
     }
 
     public boolean matches(RequestLogEntry entry) {
+        if (targetRole != null && !targetRole.isEmpty() && !"Any".equalsIgnoreCase(targetRole)) {
+            String applied = entry.getAppliedRole();
+            if (applied == null || !java.util.Arrays.asList(applied.split("\\s*,\\s*")).contains(targetRole)) {
+                return false;
+            }
+        }
+
         return switch (matchPart) {
             case STRING_IN_REQUEST, REQUEST_LENGTH, URL, DOMAIN_NAME, PROTOCOL, HTTP_METHOD, FILE_EXTENSION ->
-                    matchesRequest(entry, this::extractRequestValues);
+                matchesRequest(entry, this::extractRequestValues);
             case STRING_IN_RESPONSE, RESPONSE_LENGTH, STATUS_CODE ->
-                    matchesResponse(entry, this::extractResponseValues);
+                matchesResponse(entry, this::extractResponseValues);
+            case USER_ROLE ->
+                evaluateAgainstStrings(java.util.Arrays.asList(entry.getAppliedRole().split("\\s*,\\s*")));
         };
     }
 
@@ -165,8 +200,8 @@ public class HighlightCondition {
     }
 
     private <T> boolean evaluateWithVersion(T original,
-                                            T modified,
-                                            Function<T, List<String>> extractor) {
+            T modified,
+            Function<T, List<String>> extractor) {
         boolean originalMatched = false;
 
         if (messageVersion == MessageVersion.ORIGINAL || messageVersion == MessageVersion.ANY) {
@@ -326,6 +361,7 @@ public class HighlightCondition {
 
     @Override
     public String toString() {
-        return messageVersion.getLabel() + " " + matchPart.getLabel() + " " + relationship.getLabel() + " '" + matchValue + "'";
+        return messageVersion.getLabel() + " " + matchPart.getLabel() + " " + relationship.getLabel() + " '"
+                + matchValue + "'";
     }
 }

@@ -18,17 +18,20 @@ public class HighlightRulesPanel extends JPanel {
     private final HighlightRuleTableModel tableModel;
     private final JTable rulesTable;
     private final Consumer<List<HighlightRule>> onRulesChanged;
+    private final java.util.function.Supplier<List<String>> rolesSupplier;
 
     public HighlightRulesPanel(MontoyaApi api,
-                               List<HighlightRule> initialRules,
-                               Consumer<List<HighlightRule>> onRulesChanged) {
+            List<HighlightRule> initialRules,
+            Consumer<List<HighlightRule>> onRulesChanged,
+            java.util.function.Supplier<List<String>> rolesSupplier) {
         this.api = api;
         this.rules = new ArrayList<>(initialRules);
         this.tableModel = new HighlightRuleTableModel(rules);
         this.onRulesChanged = onRulesChanged;
-        
+        this.rolesSupplier = rolesSupplier;
+
         setLayout(new BorderLayout());
-        
+
         // Create table
         rulesTable = new JTable(tableModel) {
             @Override
@@ -47,9 +50,9 @@ public class HighlightRulesPanel extends JPanel {
         rulesTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         rulesTable.getColumnModel().getColumn(3).setCellRenderer(new HighlightColorRenderer());
         JScrollPane scrollPane = new JScrollPane(rulesTable);
-        
+
         add(scrollPane, BorderLayout.CENTER);
-        
+
         // Control panel
         JPanel controlPanel = createControlPanel();
         add(controlPanel, BorderLayout.SOUTH);
@@ -57,31 +60,32 @@ public class HighlightRulesPanel extends JPanel {
 
     private JPanel createControlPanel() {
         JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        
-    JButton addButton = new PrimaryButton("Add Highlight Rule");
+
+        JButton addButton = new PrimaryButton("Add Highlight Rule");
         addButton.addActionListener(e -> showAddRuleDialog());
-        
-    JButton editButton = new PrimaryButton("Edit");
+
+        JButton editButton = new PrimaryButton("Edit");
         editButton.addActionListener(e -> editSelectedRule());
-        
-    JButton deleteButton = new PrimaryButton("Delete");
+
+        JButton deleteButton = new PrimaryButton("Delete");
         deleteButton.addActionListener(e -> deleteSelectedRule());
-        
-    JButton enableButton = new PrimaryButton("Enable/Disable");
+
+        JButton enableButton = new PrimaryButton("Enable/Disable");
         enableButton.addActionListener(e -> toggleSelectedRule());
-        
+
         panel.add(addButton);
         panel.add(editButton);
         panel.add(deleteButton);
         panel.add(enableButton);
-        
+
         return panel;
     }
 
     private void showAddRuleDialog() {
-        HighlightRuleDialog dialog = new HighlightRuleDialog((Frame) SwingUtilities.getWindowAncestor(this), null);
+        HighlightRuleDialog dialog = new HighlightRuleDialog((Frame) SwingUtilities.getWindowAncestor(this), null,
+                rolesSupplier.get());
         dialog.setVisible(true);
-        
+
         HighlightRule newRule = dialog.getRule();
         if (newRule != null) {
             rules.add(newRule);
@@ -95,9 +99,10 @@ public class HighlightRulesPanel extends JPanel {
         int selectedRow = rulesTable.getSelectedRow();
         if (selectedRow >= 0) {
             HighlightRule rule = rules.get(selectedRow);
-            HighlightRuleDialog dialog = new HighlightRuleDialog((Frame) SwingUtilities.getWindowAncestor(this), rule);
+            HighlightRuleDialog dialog = new HighlightRuleDialog((Frame) SwingUtilities.getWindowAncestor(this), rule,
+                    rolesSupplier.get());
             dialog.setVisible(true);
-            
+
             if (dialog.getRule() != null) {
                 tableModel.fireTableRowsUpdated(selectedRow, selectedRow);
                 notifyRulesChanged();
@@ -148,7 +153,7 @@ public class HighlightRulesPanel extends JPanel {
     // Inner class for table model
     private static class HighlightRuleTableModel extends AbstractTableModel {
         private final List<HighlightRule> rules;
-        private final String[] columnNames = {"Enabled", "Name", "Criteria", "Color"};
+        private final String[] columnNames = { "Enabled", "Name", "Criteria", "Color" };
 
         public HighlightRuleTableModel(List<HighlightRule> rules) {
             this.rules = rules;
@@ -193,13 +198,15 @@ public class HighlightRulesPanel extends JPanel {
 
     private static class HighlightColorRenderer extends DefaultTableCellRenderer {
         @Override
-        public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
+        public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus,
+                int row, int column) {
             Component c = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
             if (column == 3 && value instanceof Color color) {
                 setText(String.format("#%08X", color.getRGB()).toUpperCase());
                 if (!isSelected) {
                     c.setBackground(color);
-                    c.setForeground(color.getRed() + color.getGreen() + color.getBlue() < 382 ? Color.WHITE : Color.BLACK);
+                    c.setForeground(
+                            color.getRed() + color.getGreen() + color.getBlue() < 382 ? Color.WHITE : Color.BLACK);
                 }
             } else if (!isSelected) {
                 c.setBackground(deriveRowBackground(table));

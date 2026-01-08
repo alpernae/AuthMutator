@@ -18,18 +18,20 @@ public class RequestLogEntry {
     private final boolean wasModified;
     private final boolean unauthenticatedTesting;
     private final boolean modifiedRequestSent;
+    private final String notes;
+    private final String appliedRole;
 
     public RequestLogEntry(int id, HttpRequest originalRequest, HttpRequest modifiedRequest,
-                           HttpResponse originalResponse, HttpResponse modifiedResponse,
-                           boolean unauthenticatedTesting) {
+            HttpResponse originalResponse, HttpResponse modifiedResponse,
+            boolean unauthenticatedTesting, String appliedRole) {
         this(id, originalRequest, modifiedRequest, null, originalResponse, modifiedResponse, null,
-                modifiedRequest != null, unauthenticatedTesting);
+                modifiedRequest != null, unauthenticatedTesting, "", appliedRole);
     }
 
     public RequestLogEntry(int id, HttpRequest originalRequest, HttpRequest modifiedRequest,
-                           HttpRequest unauthRequest, HttpResponse originalResponse,
-                           HttpResponse modifiedResponse, HttpResponse unauthResponse,
-                           boolean modifiedRequestSent, boolean unauthenticatedTesting) {
+            HttpRequest unauthRequest, HttpResponse originalResponse,
+            HttpResponse modifiedResponse, HttpResponse unauthResponse,
+            boolean modifiedRequestSent, boolean unauthenticatedTesting, String notes, String appliedRole) {
         this.id = id;
         this.originalRequest = originalRequest;
         this.modifiedRequest = modifiedRequest;
@@ -44,17 +46,27 @@ public class RequestLogEntry {
         this.timestamp = System.currentTimeMillis();
         this.wasModified = modifiedRequest != null && !originalRequest.toString().equals(modifiedRequest.toString());
         this.unauthenticatedTesting = unauthenticatedTesting;
+        this.notes = notes == null ? "" : notes;
+        this.appliedRole = appliedRole == null ? "" : appliedRole;
     }
 
     public RequestLogEntry(int id, HttpRequest originalRequest, HttpRequest modifiedRequest,
-                           HttpResponse originalResponse, HttpResponse modifiedResponse,
-                           HttpResponse unauthResponse, boolean unauthenticatedTesting) {
+            HttpResponse originalResponse, HttpResponse modifiedResponse,
+            HttpResponse unauthResponse, boolean unauthenticatedTesting, String appliedRole) {
         this(id, originalRequest, modifiedRequest, null, originalResponse, modifiedResponse, unauthResponse,
-                modifiedRequest != null, unauthenticatedTesting);
+                modifiedRequest != null, unauthenticatedTesting, "", appliedRole);
     }
 
     public int getId() {
         return id;
+    }
+
+    public String getNotes() {
+        return notes;
+    }
+
+    public String getAppliedRole() {
+        return appliedRole;
     }
 
     public String getMethod() {

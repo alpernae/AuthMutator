@@ -1,10 +1,12 @@
 package util;
 
+import model.AuthToken;
 import model.ExtensionConfig;
 import model.ExtensionState;
 import model.HighlightCondition;
 import model.HighlightRule;
 import model.ReplaceRule;
+import model.UserRole;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -74,6 +76,72 @@ public class JsonUtil {
         return rules;
     }
 
+    public static JSONArray userRolesToJson(List<UserRole> roles) {
+        JSONArray array = new JSONArray();
+        if (roles == null) {
+            return array;
+        }
+        for (UserRole role : roles) {
+            JSONObject obj = new JSONObject();
+            obj.putValue("name", role.getName());
+            obj.putValue("enabled", role.isEnabled());
+
+            JSONArray tokens = new JSONArray();
+            for (AuthToken token : role.getTokens()) {
+                tokens.put(authTokenToJson(token));
+            }
+            obj.putValue("tokens", tokens);
+            array.put(obj);
+        }
+        return array;
+    }
+
+    public static List<UserRole> userRolesFromJson(JSONArray array) {
+        List<UserRole> roles = new ArrayList<>();
+        if (array == null) {
+            return roles;
+        }
+        for (int i = 0; i < array.length(); i++) {
+            JSONObject obj = array.optJSONObject(i);
+            if (obj == null)
+                continue;
+
+            UserRole role = new UserRole(obj.optString("name", ""));
+            role.setEnabled(obj.optBoolean("enabled", false));
+
+            JSONArray tokens = obj.optJSONArray("tokens");
+            if (tokens != null) {
+                for (int j = 0; j < tokens.length(); j++) {
+                    AuthToken token = authTokenFromJson(tokens.optJSONObject(j));
+                    if (token != null) {
+                        role.addToken(token);
+                    }
+                }
+            }
+            roles.add(role);
+        }
+        return roles;
+    }
+
+    private static JSONObject authTokenToJson(AuthToken token) {
+        JSONObject obj = new JSONObject();
+        obj.putValue("type", token.getType().name());
+        obj.putValue("name", token.getName());
+        obj.putValue("value", token.getValue());
+        return obj;
+    }
+
+    private static AuthToken authTokenFromJson(JSONObject obj) {
+        if (obj == null)
+            return null;
+        try {
+            AuthToken.Type type = AuthToken.Type.valueOf(obj.optString("type", AuthToken.Type.HEADER.name()));
+            return new AuthToken(type, obj.optString("name", ""), obj.optString("value", ""));
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
     public static JSONArray highlightRulesToJson(List<HighlightRule> rules) {
         JSONArray array = new JSONArray();
         if (rules == null) {
@@ -112,8 +180,7 @@ public class JsonUtil {
             Color color = colorFromJson(obj.optJSONObject("color"));
             HighlightRule rule = new HighlightRule(
                     obj.optString("name", ""),
-                    color != null ? color : Color.YELLOW
-            );
+                    color != null ? color : Color.YELLOW);
             rule.setEnabled(obj.optBoolean("enabled", true));
 
             String logic = obj.optString("logic", HighlightRule.LogicalOperator.ALL.name());
@@ -147,7 +214,7 @@ public class JsonUtil {
         obj.putValue("onlyInScope", config.isOnlyInScope());
         obj.putValue("interceptEnabled", config.isInterceptEnabled());
         obj.putValue("autoModifyRequests", config.isAutoModifyRequests());
-    obj.putValue("unauthenticatedTesting", config.isUnauthenticatedTesting());
+        obj.putValue("unauthenticatedTesting", config.isUnauthenticatedTesting());
         obj.putValue("applyRulesToUnauthenticatedRequest", config.isApplyRulesToUnauthenticatedRequest());
         obj.putValue("applyToProxy", config.isApplyToProxy());
         obj.putValue("applyToRepeater", config.isApplyToRepeater());
@@ -166,7 +233,7 @@ public class JsonUtil {
         config.setOnlyInScope(obj.optBoolean("onlyInScope", false));
         config.setInterceptEnabled(obj.optBoolean("interceptEnabled", true));
         config.setAutoModifyRequests(obj.optBoolean("autoModifyRequests", true));
-    config.setUnauthenticatedTesting(obj.optBoolean("unauthenticatedTesting", false));
+        config.setUnauthenticatedTesting(obj.optBoolean("unauthenticatedTesting", false));
         config.setApplyRulesToUnauthenticatedRequest(obj.optBoolean("applyRulesToUnauthenticatedRequest", false));
         config.setApplyToProxy(obj.optBoolean("applyToProxy", false));
         config.setApplyToRepeater(obj.optBoolean("applyToRepeater", true));
@@ -177,12 +244,14 @@ public class JsonUtil {
     }
 
     public static JSONObject stateToJson(ExtensionConfig config,
-                                         List<ReplaceRule> replaceRules,
-                                         List<HighlightRule> highlightRules) {
+            List<ReplaceRule> replaceRules,
+            List<HighlightRule> highlightRules,
+            List<UserRole> userRoles) {
         JSONObject root = new JSONObject();
         root.putValue("config", configToJson(config));
         root.putValue("replaceRules", rulesToJson(replaceRules));
         root.putValue("highlightRules", highlightRulesToJson(highlightRules));
+        root.putValue("userRoles", userRolesToJson(userRoles));
         return root;
     }
 
@@ -193,7 +262,8 @@ public class JsonUtil {
         configFromJson(obj.optJSONObject("config"), config);
         List<ReplaceRule> replaceRules = rulesFromJson(obj.optJSONArray("replaceRules"));
         List<HighlightRule> highlightRules = highlightRulesFromJson(obj.optJSONArray("highlightRules"));
-        return new ExtensionState(replaceRules, highlightRules);
+        List<UserRole> userRoles = userRolesFromJson(obj.optJSONArray("userRoles"));
+        return new ExtensionState(replaceRules, highlightRules, userRoles);
     }
 
     private static JSONObject replaceOperationToJson(ReplaceRule.ReplaceOperation operation) {
@@ -211,14 +281,12 @@ public class JsonUtil {
         }
         ReplaceRule.OperationType type = parseOperationType(
                 obj.optString("type", null),
-                obj.optString("target", obj.optString("legacyTarget", ""))
-        );
+                obj.optString("target", obj.optString("legacyTarget", "")));
         return new ReplaceRule.ReplaceOperation(
                 type,
                 obj.optString("matchPattern", ""),
                 obj.optString("replaceValue", ""),
-                obj.optBoolean("useRegex", false)
-        );
+                obj.optBoolean("useRegex", false));
     }
 
     private static ReplaceRule.ReplaceOperation legacyReplaceOperationFromJson(JSONObject obj) {
@@ -234,8 +302,7 @@ public class JsonUtil {
                 type,
                 match,
                 obj.optString("replaceValue", ""),
-                obj.optBoolean("useRegex", false)
-        );
+                obj.optBoolean("useRegex", false));
     }
 
     private static JSONObject colorToJson(Color color) {
@@ -276,8 +343,7 @@ public class JsonUtil {
                     obj.optString("messageVersion", HighlightCondition.MessageVersion.ORIGINAL.name()));
             HighlightCondition.MatchPart matchPart = parseMatchPart(
                     obj.optString("matchPart", null),
-                    obj.optString("target", obj.optString("legacyTarget", ""))
-            );
+                    obj.optString("target", obj.optString("legacyTarget", "")));
             HighlightCondition.Relationship relationship = HighlightCondition.Relationship.valueOf(
                     obj.optString("relationship", HighlightCondition.Relationship.CONTAINS.name()));
             String value = obj.optString("matchValue", "");
@@ -354,8 +420,7 @@ public class JsonUtil {
                     HighlightCondition.MessageVersion.ANY,
                     HighlightCondition.MatchPart.STATUS_CODE,
                     relationship,
-                    pattern
-            ));
+                    pattern));
         }
 
         if ("RESPONSE_STRING".equals(legacyTarget)) {
@@ -363,16 +428,13 @@ public class JsonUtil {
                     HighlightCondition.MessageVersion.ANY,
                     HighlightCondition.MatchPart.STRING_IN_RESPONSE,
                     relationship,
-                    pattern
-            ));
+                    pattern));
         }
 
         return List.of(new HighlightCondition(
                 HighlightCondition.MessageVersion.ANY,
                 HighlightCondition.MatchPart.STRING_IN_REQUEST,
                 relationship,
-                pattern
-        ));
+                pattern));
     }
 }
-

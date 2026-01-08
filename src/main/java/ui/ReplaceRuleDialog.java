@@ -10,22 +10,25 @@ import java.util.List;
 
 public class ReplaceRuleDialog extends JDialog {
     private ReplaceRule rule;
+    private final java.util.List<String> availableRoles;
     private JTextField nameField;
+    private JComboBox<String> roleCombo; // Added
     private ReplaceOperationTableModel operationTableModel;
     private JTable operationTable;
-    private JButton editButton;
-    private JButton removeButton;
+    private JButton editOperationButton;
+    private JButton removeOperationButton;
     private boolean confirmed;
 
-    public ReplaceRuleDialog(Frame owner, ReplaceRule existingRule) {
-        super(owner, existingRule == null ? "Add Replace Rule" : "Edit Replace Rule", true);
+    public ReplaceRuleDialog(Frame parent, ReplaceRule existingRule, java.util.List<String> availableRoles) {
+        super(parent, existingRule == null ? "Add Replace Rule" : "Edit Replace Rule", true);
         this.rule = existingRule;
+        this.availableRoles = availableRoles != null ? availableRoles : java.util.Collections.emptyList();
         initializeUI();
         if (existingRule != null) {
             populateFields(existingRule);
         }
         pack();
-        setLocationRelativeTo(owner);
+        setLocationRelativeTo(parent);
     }
 
     private void initializeUI() {
@@ -37,21 +40,33 @@ public class ReplaceRuleDialog extends JDialog {
         gbc.gridx = 0;
         gbc.gridy = 0;
         panel.add(new JLabel("Rule Name:"), gbc);
-
         gbc.gridx = 1;
-        nameField = new JTextField(30);
+        nameField = new JTextField(20);
         panel.add(nameField, gbc);
 
+        // Role Selection
         gbc.gridx = 0;
         gbc.gridy = 1;
+        panel.add(new JLabel("Apply User Role:"), gbc);
+        gbc.gridx = 1;
+        roleCombo = new JComboBox<>();
+        roleCombo.addItem("None");
+        for (String role : availableRoles) {
+            roleCombo.addItem(role);
+        }
+        panel.add(roleCombo, gbc);
+
+        // Operations panel
+        gbc.gridx = 0;
+        gbc.gridy = 2; // Shifted down
         gbc.gridwidth = 2;
         gbc.fill = GridBagConstraints.BOTH;
         gbc.weightx = 1.0;
-    gbc.weighty = 1.0;
+        gbc.weighty = 1.0;
         JPanel operationsPanel = createOperationsPanel();
         panel.add(operationsPanel, gbc);
 
-    gbc.gridy = 2;
+        gbc.gridy = 3; // Shifted down
         gbc.fill = GridBagConstraints.HORIZONTAL;
         gbc.weightx = 0;
         gbc.weighty = 0;
@@ -69,7 +84,7 @@ public class ReplaceRuleDialog extends JDialog {
         buttonPanel.add(cancelButton);
         panel.add(buttonPanel, gbc);
 
-    add(panel);
+        add(panel);
     }
 
     private JPanel createOperationsPanel() {
@@ -79,49 +94,71 @@ public class ReplaceRuleDialog extends JDialog {
         operationTableModel = new ReplaceOperationTableModel();
         operationTable = new JTable(operationTableModel);
         operationTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        operationTable.getSelectionModel().addListSelectionListener(e -> updateButtons());
+        operationTable.getSelectionModel().addListSelectionListener(e -> updateOperationButtons());
         panel.add(new JScrollPane(operationTable), BorderLayout.CENTER);
 
         JPanel controls = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-        JButton addButton = new JButton("Add");
+        JButton addButton = new PrimaryButton("Add");
         addButton.addActionListener(e -> addOperation());
-        editButton = new JButton("Edit");
-        editButton.addActionListener(e -> editOperation());
-        removeButton = new JButton("Remove");
-        removeButton.addActionListener(e -> removeOperation());
+        editOperationButton = new PrimaryButton("Edit");
+        editOperationButton.addActionListener(e -> editOperation());
+        removeOperationButton = new PrimaryButton("Remove");
+        removeOperationButton.addActionListener(e -> removeOperation());
         controls.add(addButton);
-        controls.add(editButton);
-        controls.add(removeButton);
+        controls.add(editOperationButton);
+        controls.add(removeOperationButton);
         panel.add(controls, BorderLayout.SOUTH);
 
-        updateButtons();
+        updateOperationButtons();
         return panel;
     }
 
-    private void populateFields(ReplaceRule existing) {
-        nameField.setText(existing.getName());
-        operationTableModel.setOperations(existing.getOperations());
-        updateButtons();
+    private void populateFields(ReplaceRule rule) {
+        nameField.setText(rule.getName());
+        operationTableModel.setOperations(rule.getOperations());
+
+        String currentRole = rule.getTargetRole();
+        if (currentRole == null || currentRole.isEmpty()) {
+            roleCombo.setSelectedItem("None");
+        } else {
+            roleCombo.setSelectedItem(currentRole);
+        }
+
+        operationTable.clearSelection();
+        updateOperationButtons();
     }
 
     private boolean validateAndSave() {
         String name = nameField.getText().trim();
         if (name.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Name is required", "Validation Error", JOptionPane.ERROR_MESSAGE);
-            return false;
-        }
-        if (operationTableModel.getRowCount() == 0) {
-            JOptionPane.showMessageDialog(this, "Add at least one replacement operation", "Validation Error", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Rule name cannot be empty", "Validation Error",
+                    JOptionPane.ERROR_MESSAGE);
             return false;
         }
 
-        List<ReplaceRule.ReplaceOperation> operations = operationTableModel.getOperations();
+        String selectedRole = (String) roleCombo.getSelectedItem();
+        boolean hasRole = selectedRole != null && !"None".equals(selectedRole);
+
+        if (operationTableModel.getRowCount() == 0 && !hasRole) {
+            JOptionPane.showMessageDialog(this, "Select a User Role OR add at least one replacement operation",
+                    "Validation Error",
+                    JOptionPane.ERROR_MESSAGE);
+            return false;
+        }
+
         if (rule == null) {
             rule = new ReplaceRule(name);
         } else {
             rule.setName(name);
         }
-        rule.setOperations(operations);
+
+        if ("None".equals(selectedRole)) {
+            rule.setTargetRole(null);
+        } else {
+            rule.setTargetRole(selectedRole);
+        }
+
+        rule.setOperations(operationTableModel.getOperations());
         return true;
     }
 
@@ -140,7 +177,7 @@ public class ReplaceRuleDialog extends JDialog {
                 operationTable.setRowSelectionInterval(lastRow, lastRow);
                 operationTable.scrollRectToVisible(operationTable.getCellRect(lastRow, 0, true));
             }
-            updateButtons();
+            updateOperationButtons();
         }
     }
 
@@ -158,7 +195,7 @@ public class ReplaceRuleDialog extends JDialog {
         ReplaceRule.ReplaceOperation updated = dialog.getOperation();
         if (updated != null) {
             operationTableModel.updateOperation(selectedRow, updated);
-            updateButtons();
+            updateOperationButtons();
         }
     }
 
@@ -174,22 +211,22 @@ public class ReplaceRuleDialog extends JDialog {
         } else {
             operationTable.clearSelection();
         }
-        updateButtons();
+        updateOperationButtons();
     }
 
-    private void updateButtons() {
+    private void updateOperationButtons() {
         boolean hasSelection = operationTable != null && operationTable.getSelectedRow() >= 0;
-        if (editButton != null) {
-            editButton.setEnabled(hasSelection);
+        if (editOperationButton != null) {
+            editOperationButton.setEnabled(hasSelection);
         }
-        if (removeButton != null) {
-            removeButton.setEnabled(hasSelection);
+        if (removeOperationButton != null) {
+            removeOperationButton.setEnabled(hasSelection);
         }
     }
 
     private static class ReplaceOperationTableModel extends AbstractTableModel {
-    private final List<ReplaceRule.ReplaceOperation> operations = new ArrayList<>();
-    private final String[] columns = {"Type", "Match Pattern", "Replace Value", "Regex"};
+        private final List<ReplaceRule.ReplaceOperation> operations = new ArrayList<>();
+        private final String[] columns = { "Type", "Match Pattern", "Replace Value", "Regex" };
 
         @Override
         public int getRowCount() {
@@ -212,7 +249,7 @@ public class ReplaceRuleDialog extends JDialog {
             return switch (columnIndex) {
                 case 0 -> operation.getType().getLabel();
                 case 1 -> operation.getMatchPattern();
-                case 2 -> operation.getType().supportsReplace() ? operation.getReplaceValue() : "";
+                case 2 -> operation.getReplaceValue();
                 case 3 -> operation.isUseRegex();
                 default -> null;
             };
@@ -276,6 +313,7 @@ public class ReplaceRuleDialog extends JDialog {
         private JTextField replaceField;
         private JCheckBox regexCheckbox;
         private JLabel hintLabel;
+        // Removed authTokensPanel and related fields
         private boolean confirmed;
 
         ReplaceOperationEditor(Window owner, ReplaceRule.ReplaceOperation existing) {
@@ -295,6 +333,7 @@ public class ReplaceRuleDialog extends JDialog {
             GridBagConstraints gbc = new GridBagConstraints();
             gbc.insets = new Insets(5, 5, 5, 5);
             gbc.fill = GridBagConstraints.HORIZONTAL;
+            gbc.weightx = 1.0;
 
             gbc.gridx = 0;
             gbc.gridy = 0;
@@ -332,7 +371,10 @@ public class ReplaceRuleDialog extends JDialog {
             hintLabel.setFont(hintLabel.getFont().deriveFont(Font.ITALIC, hintLabel.getFont().getSize() - 1f));
             panel.add(hintLabel, gbc);
 
-            gbc.gridy = 5;
+            // Removed authTokensPanel creation and addition
+
+            gbc.gridy = 5; // Adjusted gridy
+            gbc.weighty = 0;
             gbc.fill = GridBagConstraints.NONE;
             gbc.anchor = GridBagConstraints.EAST;
             JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT));
@@ -352,6 +394,8 @@ public class ReplaceRuleDialog extends JDialog {
             add(panel);
         }
 
+        // Removed createAuthTokensPanel()
+
         private ReplaceRule.OperationType selectedType() {
             ReplaceRule.OperationType type = (ReplaceRule.OperationType) typeCombo.getSelectedItem();
             return type != null ? type : ReplaceRule.OperationType.REQUEST_STRING;
@@ -359,23 +403,34 @@ public class ReplaceRuleDialog extends JDialog {
 
         private void updateFieldState() {
             ReplaceRule.OperationType type = selectedType();
+            if (type == null) {
+                return;
+            }
 
+            // Match Logic
             boolean supportsMatch = type.supportsMatch();
             boolean requiresMatch = type.requiresMatch();
-            matchLabel.setEnabled(supportsMatch);
+
+            matchLabel.setVisible(supportsMatch);
+            matchField.setVisible(supportsMatch);
             matchField.setEnabled(supportsMatch);
             if (!supportsMatch) {
                 matchField.setText("");
             }
 
-            boolean supportsReplace = type.supportsReplace();
+            // Replace Logic
+            boolean showReplace = type.supportsReplace();
             boolean requiresReplace = type.requiresReplace();
-            replaceLabel.setEnabled(supportsReplace);
-            replaceField.setEnabled(supportsReplace);
-            if (!supportsReplace) {
+
+            replaceLabel.setText("Replace Value:");
+            replaceLabel.setVisible(showReplace);
+            replaceField.setVisible(showReplace);
+            replaceField.setEnabled(showReplace);
+            if (!showReplace) {
                 replaceField.setText("");
             }
 
+            regexCheckbox.setVisible(type.supportsRegex());
             regexCheckbox.setEnabled(type.supportsRegex());
             if (!type.supportsRegex()) {
                 regexCheckbox.setSelected(false);
@@ -384,14 +439,14 @@ public class ReplaceRuleDialog extends JDialog {
             if (supportsMatch) {
                 matchField.setToolTipText(requiresMatch && !type.allowsBlankMatch()
                         ? "Match pattern is required"
-                        : "Match pattern (optional)"
-                );
+                        : "Match pattern (optional)");
             } else {
                 matchField.setToolTipText(null);
             }
 
-            if (supportsReplace) {
-                replaceField.setToolTipText(requiresReplace ? "Replacement value is required" : "Replacement value (optional)");
+            if (showReplace) {
+                replaceField.setToolTipText(
+                        requiresReplace ? "Replacement value is required" : "Replacement value (optional)");
             } else {
                 replaceField.setToolTipText(null);
             }
@@ -400,12 +455,20 @@ public class ReplaceRuleDialog extends JDialog {
                 case REQUEST_HEADER -> "Leave Match empty to add a header using 'Header-Name: value' in Replace.";
                 case REMOVE_PARAMETER_BY_NAME, REMOVE_PARAMETER_BY_VALUE,
                         REMOVE_COOKIE_BY_NAME, REMOVE_COOKIE_BY_VALUE,
-                        REMOVE_HEADER_BY_NAME, REMOVE_HEADER_BY_VALUE -> "Removes items that match the pattern.";
+                        REMOVE_HEADER_BY_NAME, REMOVE_HEADER_BY_VALUE ->
+                    "Removes items that match the pattern.";
                 case MATCH_PARAM_NAME_REPLACE_VALUE -> "Matches parameter names and sets their value to Replace.";
                 case MATCH_COOKIE_NAME_REPLACE_VALUE -> "Matches cookie names and sets their value to Replace.";
                 case MATCH_HEADER_NAME_REPLACE_VALUE -> "Matches header names and sets their value to Replace.";
                 default -> "";
             });
+
+            // Removed authTokensPanel.setVisible(isAuthProfile);
+
+            // Re-layout explicitly to handle visibility changes
+            revalidate();
+            repaint();
+            pack(); // Resize dialog to fit new content
         }
 
         private void populate(ReplaceRule.ReplaceOperation existing) {
@@ -420,29 +483,34 @@ public class ReplaceRuleDialog extends JDialog {
                 replaceField.setText(existing.getReplaceValue());
             }
             regexCheckbox.setSelected(type.supportsRegex() && existing.isUseRegex());
+
+            // Removed AuthProfile token population
         }
 
         private boolean validateAndSave() {
             ReplaceRule.OperationType type = selectedType();
+            String matchPattern = matchField.getText().trim();
 
-            String match = matchField.getText().trim();
             if (type.supportsMatch()) {
-                if (type.requiresMatch() && match.isEmpty()) {
-                    JOptionPane.showMessageDialog(this, "Match pattern is required", "Validation Error", JOptionPane.ERROR_MESSAGE);
+                if (type.requiresMatch() && matchPattern.isEmpty()) {
+                    JOptionPane.showMessageDialog(this, "Match pattern is required", "Validation Error",
+                            JOptionPane.ERROR_MESSAGE);
                     return false;
                 }
-                if (!type.requiresMatch() && !type.allowsBlankMatch() && match.isEmpty()) {
-                    JOptionPane.showMessageDialog(this, "Match pattern cannot be empty", "Validation Error", JOptionPane.ERROR_MESSAGE);
+                if (!type.requiresMatch() && !type.allowsBlankMatch() && matchPattern.isEmpty()) {
+                    JOptionPane.showMessageDialog(this, "Match pattern cannot be empty", "Validation Error",
+                            JOptionPane.ERROR_MESSAGE);
                     return false;
                 }
             } else {
-                match = "";
+                matchPattern = "";
             }
 
             String replaceValue = replaceField.getText();
             if (type.supportsReplace()) {
-                if (type.requiresReplace() && replaceValue.trim().isEmpty()) {
-                    JOptionPane.showMessageDialog(this, "Replacement value is required", "Validation Error", JOptionPane.ERROR_MESSAGE);
+                if (replaceValue.isEmpty() && type.requiresReplace()) {
+                    JOptionPane.showMessageDialog(this, "Replace value cannot be empty for this operation type",
+                            "Validation Error", JOptionPane.ERROR_MESSAGE);
                     return false;
                 }
             } else {
@@ -452,19 +520,18 @@ public class ReplaceRuleDialog extends JDialog {
             boolean useRegex = type.supportsRegex() && regexCheckbox.isSelected();
 
             if (operation == null) {
-                operation = new ReplaceRule.ReplaceOperation(type, match, replaceValue, useRegex);
+                operation = new ReplaceRule.ReplaceOperation(type, matchPattern, replaceValue, useRegex);
             } else {
                 operation.setType(type);
-                operation.setMatchPattern(match);
+                operation.setMatchPattern(matchPattern);
                 operation.setReplaceValue(replaceValue);
                 operation.setUseRegex(useRegex);
             }
-
             return true;
         }
 
-        ReplaceRule.ReplaceOperation getOperation() {
-            return confirmed ? operation.copy() : null;
+        public ReplaceRule.ReplaceOperation getOperation() {
+            return confirmed ? operation : null;
         }
     }
 }

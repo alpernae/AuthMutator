@@ -1,18 +1,14 @@
 package ui;
 
-import model.RequestLogEntry;
 import model.RequestLogModel;
-
 import javax.swing.*;
-import javax.swing.table.TableRowSorter;
 import java.awt.*;
 import java.util.ArrayList;
 import java.util.List;
 
 public class FilterPanel extends JPanel {
-    private final RequestLogModel requestLogModel;
     private final RequestTablePanel requestTablePanel;
-    
+
     private JComboBox<String> methodFilter;
     private JComboBox<String> statusFilter;
     private JTextField urlFilter;
@@ -21,7 +17,6 @@ public class FilterPanel extends JPanel {
     private JButton clearButton;
 
     public FilterPanel(RequestLogModel requestLogModel, RequestTablePanel requestTablePanel) {
-        this.requestLogModel = requestLogModel;
         this.requestTablePanel = requestTablePanel;
         initializeUI();
     }
@@ -32,12 +27,13 @@ public class FilterPanel extends JPanel {
 
         // Method filter
         add(new JLabel("Method:"));
-        methodFilter = new JComboBox<>(new String[]{"All", "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"});
+        methodFilter = new JComboBox<>(
+                new String[] { "All", "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD" });
         add(methodFilter);
 
         // Status code filter
         add(new JLabel("Status:"));
-        statusFilter = new JComboBox<>(new String[]{"All", "2xx", "3xx", "4xx", "5xx"});
+        statusFilter = new JComboBox<>(new String[] { "All", "2xx", "3xx", "4xx", "5xx" });
         add(statusFilter);
 
         // URL filter

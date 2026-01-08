@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Objects;
 
 public class HighlightRuleDialog extends JDialog {
+    private final java.util.List<String> availableRoles;
     private JTextField nameField;
     private JComboBox<HighlightRule.LogicalOperator> logicCombo;
     private HighlightConditionTableModel conditionTableModel;
@@ -22,16 +23,17 @@ public class HighlightRuleDialog extends JDialog {
     private HighlightRule rule;
     private boolean confirmed;
 
-    public HighlightRuleDialog(Frame parent, HighlightRule existingRule) {
+    public HighlightRuleDialog(Frame parent, HighlightRule existingRule, java.util.List<String> availableRoles) {
         super(parent, existingRule == null ? "Add Highlight Rule" : "Edit Highlight Rule", true);
+        this.availableRoles = availableRoles != null ? availableRoles : java.util.Collections.emptyList();
         this.rule = existingRule;
         this.selectedColor = existingRule != null ? existingRule.getColor() : Color.YELLOW;
         initializeUI();
-        
+
         if (existingRule != null) {
             populateFields(existingRule);
         }
-        
+
         pack();
         setLocationRelativeTo(parent);
     }
@@ -43,18 +45,20 @@ public class HighlightRuleDialog extends JDialog {
         gbc.fill = GridBagConstraints.HORIZONTAL;
 
         // Name
-        gbc.gridx = 0; gbc.gridy = 0;
+        gbc.gridx = 0;
+        gbc.gridy = 0;
         panel.add(new JLabel("Name:"), gbc);
         gbc.gridx = 1;
         nameField = new JTextField(20);
         panel.add(nameField, gbc);
 
         // Advanced conditions panel
-    gbc.gridx = 0; gbc.gridy = 1;
+        gbc.gridx = 0;
+        gbc.gridy = 1;
         gbc.gridwidth = 2;
         gbc.fill = GridBagConstraints.BOTH;
         gbc.weightx = 1.0;
-    gbc.weighty = 1.0;
+        gbc.weighty = 1.0;
         JPanel advancedPanel = createAdvancedConditionsPanel();
         panel.add(advancedPanel, gbc);
 
@@ -64,7 +68,8 @@ public class HighlightRuleDialog extends JDialog {
         gbc.weighty = 0;
 
         // Color picker
-    gbc.gridx = 0; gbc.gridy = 2;
+        gbc.gridx = 0;
+        gbc.gridy = 2;
         gbc.gridwidth = 1;
         panel.add(new JLabel("Highlight Color:"), gbc);
         gbc.gridx = 1;
@@ -79,7 +84,7 @@ public class HighlightRuleDialog extends JDialog {
         });
         panel.add(colorButton, gbc);
 
-    // Buttons
+        // Buttons
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
         JButton okButton = new JButton("OK");
         okButton.addActionListener(e -> {
@@ -116,15 +121,15 @@ public class HighlightRuleDialog extends JDialog {
         }
 
         if (conditionTableModel.getRowCount() == 0) {
-            JOptionPane.showMessageDialog(this, "Add at least one condition", "Validation Error", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Add at least one condition", "Validation Error",
+                    JOptionPane.ERROR_MESSAGE);
             return false;
         }
 
         if (rule == null) {
             rule = new HighlightRule(
-                name,
-                selectedColor
-            );
+                    name,
+                    selectedColor);
         } else {
             rule.setName(name);
             rule.setColor(selectedColor);
@@ -177,7 +182,7 @@ public class HighlightRuleDialog extends JDialog {
     }
 
     private void addCondition() {
-        HighlightConditionDialog dialog = new HighlightConditionDialog(this, null);
+        HighlightConditionDialog dialog = new HighlightConditionDialog(this, null, availableRoles);
         dialog.setVisible(true);
         HighlightCondition condition = dialog.getCondition();
         if (condition != null) {
@@ -200,7 +205,7 @@ public class HighlightRuleDialog extends JDialog {
         if (existing == null) {
             return;
         }
-        HighlightConditionDialog dialog = new HighlightConditionDialog(this, existing);
+        HighlightConditionDialog dialog = new HighlightConditionDialog(this, existing, availableRoles);
         dialog.setVisible(true);
         HighlightCondition updated = dialog.getCondition();
         if (updated != null) {
@@ -232,7 +237,7 @@ public class HighlightRuleDialog extends JDialog {
 
     private static class HighlightConditionTableModel extends AbstractTableModel {
         private final List<HighlightCondition> conditions = new ArrayList<>();
-    private final String[] columnNames = {"Version", "Part", "Relationship", "Value"};
+        private final String[] columnNames = { "Version", "Part", "Relationship", "Value" };
 
         @Override
         public int getRowCount() {

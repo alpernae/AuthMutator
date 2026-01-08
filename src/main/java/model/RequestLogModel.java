@@ -6,7 +6,8 @@ import java.util.List;
 
 public class RequestLogModel extends AbstractTableModel {
     private final List<RequestLogEntry> entries;
-    private final String[] columnNames = {"ID", "Method", "URL", "Status", "Modified Status", "Cookies", "Parameters"};
+    private final String[] columnNames = { "ID", "User Role", "Method", "URL", "Original Status Code",
+            "Modified Status Code", "Cookies", "Parameters" };
     private boolean showUnauthColumn;
     private int maxEntries = 1000;
 
@@ -16,10 +17,10 @@ public class RequestLogModel extends AbstractTableModel {
 
     public void addEntry(RequestLogEntry entry) {
         javax.swing.SwingUtilities.invokeLater(() -> {
-            System.out.println(">>> ADDING ENTRY TO TABLE - ID: " + entry.getId() + 
-                             ", URL: " + entry.getUrl() + 
-                             ", modifiedResponse: " + (entry.getModifiedResponse() != null ? "present" : "NULL") +
-                             ", originalResponse: " + (entry.getOriginalResponse() != null ? "present" : "NULL"));
+            System.out.println(">>> ADDING ENTRY TO TABLE - ID: " + entry.getId() +
+                    ", URL: " + entry.getUrl() +
+                    ", modifiedResponse: " + (entry.getModifiedResponse() != null ? "present" : "NULL") +
+                    ", originalResponse: " + (entry.getOriginalResponse() != null ? "present" : "NULL"));
             int row = entries.size();
             entries.add(entry);
             fireTableRowsInserted(row, row);
@@ -102,12 +103,13 @@ public class RequestLogModel extends AbstractTableModel {
         if (columnIndex < columnNames.length) {
             return switch (columnIndex) {
                 case 0 -> entry.getId();
-                case 1 -> entry.getMethod();
-                case 2 -> entry.getUrl();
-                case 3 -> entry.getOriginalStatusCode() != null ? entry.getOriginalStatusCode() : entry.getStatusCode();
-                case 4 -> entry.getModifiedStatusCode();
-                case 5 -> entry.getCookieSummary();
-                case 6 -> entry.getParameterSummary();
+                case 1 -> entry.getAppliedRole();
+                case 2 -> entry.getMethod();
+                case 3 -> entry.getUrl();
+                case 4 -> entry.getOriginalStatusCode() != null ? entry.getOriginalStatusCode() : entry.getStatusCode();
+                case 5 -> entry.getModifiedStatusCode();
+                case 6 -> entry.getCookieSummary();
+                case 7 -> entry.getParameterSummary();
                 default -> null;
             };
         }
@@ -118,7 +120,7 @@ public class RequestLogModel extends AbstractTableModel {
     public Class<?> getColumnClass(int columnIndex) {
         if (columnIndex < columnNames.length) {
             return switch (columnIndex) {
-                case 0, 3, 4 -> Integer.class;
+                case 0, 4, 5 -> Integer.class;
                 default -> String.class;
             };
         }

@@ -8,6 +8,7 @@ public class ReplaceRule {
     private String name;
     private boolean enabled;
     private final List<ReplaceOperation> operations;
+    private String targetRole;
 
     public enum OperationType {
         REQUEST_STRING("Request String", true, true, true, true, true, false),
@@ -36,12 +37,12 @@ public class ReplaceRule {
         private final boolean allowsBlankMatch;
 
         OperationType(String label,
-                      boolean supportsMatch,
-                      boolean requiresMatch,
-                      boolean supportsReplace,
-                      boolean requiresReplace,
-                      boolean supportsRegex,
-                      boolean allowsBlankMatch) {
+                boolean supportsMatch,
+                boolean requiresMatch,
+                boolean supportsReplace,
+                boolean requiresReplace,
+                boolean supportsRegex,
+                boolean allowsBlankMatch) {
             this.label = label;
             this.supportsMatch = supportsMatch;
             this.requiresMatch = requiresMatch;
@@ -84,9 +85,18 @@ public class ReplaceRule {
         this.name = name;
         this.enabled = true;
         this.operations = new ArrayList<>();
+        this.targetRole = ""; // Initialized
     }
 
     // Getters and setters
+    public String getTargetRole() {
+        return targetRole;
+    }
+
+    public void setTargetRole(String targetRole) {
+        this.targetRole = targetRole;
+    }
+
     public String getName() {
         return name;
     }
@@ -119,6 +129,10 @@ public class ReplaceRule {
 
     public boolean hasOperations() {
         return !operations.isEmpty();
+    }
+
+    public boolean hasWorkToDo() {
+        return !operations.isEmpty() || (targetRole != null && !targetRole.isEmpty());
     }
 
     public String describeOperations() {

@@ -43,9 +43,10 @@ public class PersistenceService {
 
     public void saveState(ExtensionConfig config, ExtensionState state) {
         try {
-        JSONObject root = JsonUtil.stateToJson(config,
-            state.getReplaceRules(),
-            state.getHighlightRules());
+            JSONObject root = JsonUtil.stateToJson(config,
+                    state.getReplaceRules(),
+                    state.getHighlightRules(),
+                    state.getUserRoles());
             ensureParentDirectory();
             Files.writeString(stateFile, root.toString(), StandardCharsets.UTF_8);
         } catch (IOException e) {
@@ -62,9 +63,10 @@ public class PersistenceService {
     }
 
     public void exportState(Path file, ExtensionConfig config, ExtensionState state) throws IOException {
-    JSONObject root = JsonUtil.stateToJson(config,
-        state.getReplaceRules(),
-        state.getHighlightRules());
+        JSONObject root = JsonUtil.stateToJson(config,
+                state.getReplaceRules(),
+                state.getHighlightRules(),
+                state.getUserRoles());
         ensureTargetDirectory(file);
         Files.writeString(file, root.toString(), StandardCharsets.UTF_8);
     }
@@ -80,9 +82,11 @@ public class PersistenceService {
             JSONArray highlightArr = root.optJSONArray("highlightRules");
 
             List<ReplaceRule> replaceRules = JsonUtil.rulesFromJson(replaceArr != null ? replaceArr : new JSONArray());
-            List<HighlightRule> highlightRules = JsonUtil.highlightRulesFromJson(highlightArr != null ? highlightArr : new JSONArray());
+            List<HighlightRule> highlightRules = JsonUtil
+                    .highlightRulesFromJson(highlightArr != null ? highlightArr : new JSONArray());
+            List<model.UserRole> userRoles = JsonUtil.userRolesFromJson(root.optJSONArray("userRoles"));
 
-            return new ExtensionState(replaceRules, highlightRules);
+            return new ExtensionState(replaceRules, highlightRules, userRoles);
         } catch (Exception ex) {
             api.logging().logToError("Invalid state JSON: " + ex.getMessage());
             return new ExtensionState();

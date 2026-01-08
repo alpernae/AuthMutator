@@ -47,69 +47,74 @@ Copy or rename the file as needed before loading it into Burp Suite.
 4. The extension tab appears as **Auth Mutator**; logs confirming successful load are printed to the Burp output tab.
 
 ## Usage Overview
-
-The **Auth Mutator** tab is organised into four sub-tabs.
-
+ 
+The **Auth Mutator** tab is organised into three main sub-tabs.
+ 
 ### Request Log
-
-- Displays every processed request with columns for original status, modified status, cookie count, parameter count, and optionally an **Unauth** flag.
+ 
+- Displays every processed request with columns for **ID**, **User Role**, **Method**, **URL**, **Original Status**, **Modified Status**, **Cookies**, and **Parameters**.
+- Includes a **Filter Role** input to quickly filter logs by the applied user role.
 - Selecting a row opens two viewers (Request / Response) with tabs:
 	- **Original** – exact traffic Burp sent or received.
 	- **Modified** – the request/response after replace rules were applied.
 	- **Unauth** – the variant sent with cookies stripped (only present when unauthenticated testing is enabled and triggered).
 	- **Diff** – colour-coded line diff highlighting only additions (`+` blue) and removals (`-` red).
-- Quick column layout updates automatically when the Unaith toggle is enabled/disabled.
-
+ 
 ### Quick Controls
-
-Located above the Request Log and mirrored in **Settings** for persistence.
-
-- **Extension Enabled** – master toggle; disables all processing when off.
-- **Affect Proxy** – allow replace rules to mutate live browser traffic. Disable to keep Proxy requests untouched.
-- **Preview in Proxy** – compute diffs without modifying live Proxy traffic (synthetic requests are replayed off-band to populate the log).
-- **In Scope Only** – restrict processing to URLs within Burp's target scope.
-- **Unauthenticated Testing** – fire an additional request per entry with cookies stripped. When active:
-	- **Apply rules to unauth request** determines whether replace rules run before cookie stripping for the unauth variant.
-
-### Replace Rules
-
-- Create sequences of operations (header edits, parameter rewrites, regex replacements, removals, etc.).
-- Rules run in order; multiple operations within a rule can build complex transformations.
-- Enable/disable rules quickly, import/export JSON bundles, and toggle entire rules via the table.
-
-### Highlight Rules
-
-- Define logical conditions (ANY/ALL) based on message version, parts (request/response), and relationships (equals, contains, regex, length, status code).
-- Matches provide coloured row highlighting in the Request Log.
-
+ 
+Located above the Request Log, providing immediate access to global settings and state management:
+ 
+- **Checkboxes**:
+    - **Affect Proxy** – allow replace rules to mutate live browser traffic.
+    - **Preview in Proxy** – compute diffs without modifying live Proxy traffic.
+    - **In Scope Only** – restrict processing to targets in scope.
+    - **Exclude static files** – ignore resources like images, CSS, JS.
+    - **Unauthenticated Testing** – trigger synthetic unauth requests.
+- **Actions**:
+    - **Import State / Export State**: Load or save your configuration (JSON) directly from this panel.
+    - **Extension Enabled**: Master toggle.
+ 
+### Rules and Roles
+ 
+This unified workspace manages your testing logic. It is divided into three sections:
+ 
+1.  **User Roles (Top Left)**: 
+    - Define identities (e.g., "Admin", "User A").
+    - Manage their authentication tokens (headers/cookies).
+ 
+2.  **Highlight Rules (Top Right)**:
+    - Define logic to flag interesting responses (e.g., "Status = 200 AND Body contains 'Welcome'").
+    - **Role Filtering**: Create conditions that trigger only if a specific User Role was applied.
+ 
+3.  **Replacement Rules (Bottom)**: 
+    - Define the mutation logic.
+    - Link a **User Role** (to impersonate identity).
+    - Add **Operations** (to fuzz/modify parameters).
+    - When a rule runs, it applies the User Role first (if selected), then executes the operations.
+ 
 ### Settings
-
+ 
 - Mirrors quick controls for persistence.
-- Adjust request log retention (minimum 100 entries; oldest entries drop automatically when the limit is hit).
-- Configure tool scope (Proxy/Repeater/Intruder/Scanner) for rule application.
-- Access **Safe Mode** to disable Proxy mutation while keeping preview active.
-
+- Adjust request log retention.
+- Configure tool scope (Proxy/Repeater/Intruder/Scanner).
+- Access **Safe Mode**.
+ 
 ## Unauthenticated Testing Workflow
-
+ 
 1. Enable **Unauthenticated testing** in Quick Controls.
-2. Choose whether to apply replace rules to the unauthenticated variant.
-3. For each processed request:
-	 - The main traffic follows normal rule application (if allowed for the tool).
-	 - A synthetic unauthenticated request is sent with cookies removed.
+2. For each processed request:
+	 - The main traffic follows normal rule application (Role + Operations).
+	 - A synthetic unauthenticated request is sent with cookies stripped.
 	 - The Request Log displays all three versions (original, rule-modified, unauth).
-	 - Differences are visible via the Diff tab and status columns.
-
-When **Preview in Proxy** is active, the original traffic still flows unchanged while modified and unauth variants are replayed out-of-band for comparison.
-
+ 
 ## Persistence & State
-
-- Rules and configuration are stored in `~/.AuthMutator.json`.
-- The **State Actions** panel (top-right of Request Log tab) offers **Import** and **Export** buttons for sharing or backing up state.
-- Imported state is immediately saved and applied across all panels.
-
+ 
+- Rules, Roles, and settings are stored in `~/.AuthMutator.json`.
+- The **State Actions** panel allows import/export of your configuration.
+ 
 ## Development Notes
 
-- The project targets Java 17 and uses the Montoya API (`net.portswigger.burp.extensions:montoya-api:2025.7`).
+- The project targets Java 17 and uses the Montoya API (`net.portswigger.burp.extensions:montoya-api:2025.10`).
 - Swing UI components are located under `src/main/java/ui`.
 - HTTP processing lives in `src/main/java/handler/RequestHandler.java`.
 - Run `./gradlew build` to verify changes; the task compiles sources and assembles the distributable JAR.

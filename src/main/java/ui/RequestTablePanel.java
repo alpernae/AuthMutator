@@ -40,6 +40,7 @@ public class RequestTablePanel extends JPanel {
     private int requestDiffTabIndex;
     private int responseUnauthTabIndex;
     private int responseDiffTabIndex;
+    private JTextField userRoleFilterField;
 
     public RequestTablePanel(MontoyaApi api, RequestLogModel requestLogModel) {
         this.api = api;
@@ -47,6 +48,28 @@ public class RequestTablePanel extends JPanel {
         this.highlightRules = new java.util.ArrayList<>();
 
         setLayout(new BorderLayout());
+
+        // Create Filter Panel
+        JPanel filterPanel = new JPanel(new BorderLayout());
+        JPanel leftFilter = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        leftFilter.add(new JLabel("Filter Role:"));
+        userRoleFilterField = new JTextField(20);
+        userRoleFilterField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            public void insertUpdate(javax.swing.event.DocumentEvent e) {
+                updateFilter();
+            }
+
+            public void removeUpdate(javax.swing.event.DocumentEvent e) {
+                updateFilter();
+            }
+
+            public void changedUpdate(javax.swing.event.DocumentEvent e) {
+                updateFilter();
+            }
+        });
+        leftFilter.add(userRoleFilterField);
+        filterPanel.add(leftFilter, BorderLayout.WEST);
+        add(filterPanel, BorderLayout.NORTH);
 
         // Create table with model
         requestTable = new JTable(requestLogModel) {
@@ -75,30 +98,37 @@ public class RequestTablePanel extends JPanel {
             }
         };
         sorter = new TableRowSorter<>(requestLogModel);
-        
+
         // Set up comparators for each column to prevent null comparator exceptions
-        sorter.setComparator(0, java.util.Comparator.comparingInt(o -> (Integer) o));  // ID
-        sorter.setComparator(1, java.util.Comparator.comparing(String::valueOf));       // Method
-        sorter.setComparator(2, java.util.Comparator.comparing(String::valueOf));       // URL
-        sorter.setComparator(3, (o1, o2) -> {                                           // Status
+        sorter.setComparator(0, java.util.Comparator.comparingInt(o -> (Integer) o)); // ID
+        sorter.setComparator(1, java.util.Comparator.comparing(String::valueOf)); // User Role
+        sorter.setComparator(2, java.util.Comparator.comparing(String::valueOf)); // Method
+        sorter.setComparator(3, java.util.Comparator.comparing(String::valueOf)); // URL
+        sorter.setComparator(4, (o1, o2) -> { // Original Status
             Integer i1 = (Integer) o1;
             Integer i2 = (Integer) o2;
-            if (i1 == null && i2 == null) return 0;
-            if (i1 == null) return 1;
-            if (i2 == null) return -1;
+            if (i1 == null && i2 == null)
+                return 0;
+            if (i1 == null)
+                return 1;
+            if (i2 == null)
+                return -1;
             return i1.compareTo(i2);
         });
-        sorter.setComparator(4, (o1, o2) -> {                                           // Modified Status
+        sorter.setComparator(5, (o1, o2) -> { // Modified Status
             Integer i1 = (Integer) o1;
             Integer i2 = (Integer) o2;
-            if (i1 == null && i2 == null) return 0;
-            if (i1 == null) return 1;
-            if (i2 == null) return -1;
+            if (i1 == null && i2 == null)
+                return 0;
+            if (i1 == null)
+                return 1;
+            if (i2 == null)
+                return -1;
             return i1.compareTo(i2);
         });
-        sorter.setComparator(5, java.util.Comparator.comparing(String::valueOf));       // Cookies
-        sorter.setComparator(6, java.util.Comparator.comparing(String::valueOf));       // Parameters
-        
+        sorter.setComparator(6, java.util.Comparator.comparing(String::valueOf)); // Cookies
+        sorter.setComparator(7, java.util.Comparator.comparing(String::valueOf)); // Parameters
+
         requestTable.setRowSorter(sorter);
         requestTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         requestTable.setAutoResizeMode(JTable.AUTO_RESIZE_ALL_COLUMNS);
@@ -111,7 +141,7 @@ public class RequestTablePanel extends JPanel {
 
         JScrollPane tableScrollPane = new JScrollPane(requestTable);
 
-        // Create request/response viewer
+        // Create request/response viewer with sidebar
         JSplitPane messageViewerPane = createMessageViewer();
 
         // Split pane for table and message viewer
@@ -133,13 +163,13 @@ public class RequestTablePanel extends JPanel {
     private JSplitPane createMessageViewer() {
         // Create request editors
         originalRequestEditor = api.userInterface().createHttpRequestEditor();
-    modifiedRequestEditor = api.userInterface().createHttpRequestEditor();
-    unauthRequestEditor = api.userInterface().createHttpRequestEditor();
+        modifiedRequestEditor = api.userInterface().createHttpRequestEditor();
+        unauthRequestEditor = api.userInterface().createHttpRequestEditor();
 
         // Create response editors
         originalResponseEditor = api.userInterface().createHttpResponseEditor();
         modifiedResponseEditor = api.userInterface().createHttpResponseEditor();
-    unauthResponseEditor = api.userInterface().createHttpResponseEditor();
+        unauthResponseEditor = api.userInterface().createHttpResponseEditor();
 
         // Request tabbed pane
         requestTabbedPane = new JTabbedPane();
@@ -158,8 +188,8 @@ public class RequestTablePanel extends JPanel {
         requestTabbedPane.addTab("Unauth Request", unauthReqPanel);
         requestTabbedPane.setEnabledAt(requestUnauthTabIndex, false);
 
-    requestDiffPane = createDiffPane();
-    JScrollPane requestDiffScroll = new JScrollPane(requestDiffPane);
+        requestDiffPane = createDiffPane();
+        JScrollPane requestDiffScroll = new JScrollPane(requestDiffPane);
         requestDiffTabIndex = requestTabbedPane.getTabCount();
         requestTabbedPane.addTab("Diff", requestDiffScroll);
         requestTabbedPane.setEnabledAt(requestDiffTabIndex, false);
@@ -189,8 +219,8 @@ public class RequestTablePanel extends JPanel {
         responseTabbedPane.addTab("Unauth Response", unauthRespPanel);
         responseTabbedPane.setEnabledAt(responseUnauthTabIndex, false);
 
-    responseDiffPane = createDiffPane();
-    JScrollPane responseDiffScroll = new JScrollPane(responseDiffPane);
+        responseDiffPane = createDiffPane();
+        JScrollPane responseDiffScroll = new JScrollPane(responseDiffPane);
         responseDiffTabIndex = responseTabbedPane.getTabCount();
         responseTabbedPane.addTab("Diff", responseDiffScroll);
         responseTabbedPane.setEnabledAt(responseDiffTabIndex, false);
@@ -203,10 +233,11 @@ public class RequestTablePanel extends JPanel {
         responseContainer.add(respLabel, BorderLayout.NORTH);
         responseContainer.add(responseTabbedPane, BorderLayout.CENTER);
 
-        JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, requestContainer, responseContainer);
-        splitPane.setDividerLocation(500);
+        JSplitPane viewerSplitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, requestContainer, responseContainer);
+        viewerSplitPane.setDividerLocation(500);
+        viewerSplitPane.setResizeWeight(0.5);
 
-        return splitPane;
+        return viewerSplitPane;
     }
 
     public void refreshColumnLayout() {
@@ -216,24 +247,27 @@ public class RequestTablePanel extends JPanel {
                 return;
             }
 
-            int[] widths = {50, 80, 400, 80, 110, 100, 100};
+            // ID, Role, Method, URL, Orig, Mod, Cookies, Params
+            int[] widths = { 50, 120, 80, 400, 60, 60, 80, 80 };
             for (int i = 0; i < Math.min(widths.length, columnCount); i++) {
                 requestTable.getColumnModel().getColumn(i).setPreferredWidth(widths[i]);
             }
 
-            if (columnCount > 7) {
-                requestTable.getColumnModel().getColumn(7).setPreferredWidth(70);
+            // Unauth Column (Index 8)
+            if (columnCount > 8) {
+                requestTable.getColumnModel().getColumn(8).setPreferredWidth(70);
                 DefaultTableCellRenderer centerRenderer = new DefaultTableCellRenderer();
                 centerRenderer.setHorizontalAlignment(SwingConstants.CENTER);
-                requestTable.getColumnModel().getColumn(7).setCellRenderer(centerRenderer);
-                
+                requestTable.getColumnModel().getColumn(8).setCellRenderer(centerRenderer);
+
                 // Set comparator for Unauth column
-                sorter.setComparator(7, java.util.Comparator.comparing(o -> (Boolean) o));
+                sorter.setComparator(8, java.util.Comparator.comparing(o -> (Boolean) o));
             }
 
             DefaultTableCellRenderer leftRenderer = new DefaultTableCellRenderer();
             leftRenderer.setHorizontalAlignment(SwingConstants.LEFT);
-            for (int columnIndex : new int[]{0, 3, 4}) {
+            // ID(0), Role(1), Method(2), URL(3), Orig(4), Mod(5) are left aligned usually
+            for (int columnIndex : new int[] { 0, 1, 2, 3, 4, 5 }) {
                 if (columnIndex < columnCount) {
                     requestTable.getColumnModel().getColumn(columnIndex).setCellRenderer(leftRenderer);
                 }
@@ -246,7 +280,7 @@ public class RequestTablePanel extends JPanel {
         if (selectedRow >= 0) {
             int modelRow = requestTable.convertRowIndexToModel(selectedRow);
             RequestLogEntry entry = requestLogModel.getEntry(modelRow);
-            
+
             if (entry != null) {
                 requestTabbedPane.setSelectedIndex(0);
                 responseTabbedPane.setSelectedIndex(0);
@@ -292,31 +326,39 @@ public class RequestTablePanel extends JPanel {
                 HttpResponse unauthResponse = entry.getUnauthResponse();
 
                 // Debug logging
-                api.logging().logToOutput("UI Display - Entry ID: " + entry.getId() + 
-                                        ", wasModifiedSent: " + entry.wasModifiedRequestSent() +
-                                        ", originalResponse: " + (originalResponse != null ? "present (" + originalResponse.statusCode() + ")" : "null") +
-                                        ", modifiedResponse: " + (modifiedResponse != null ? "present (" + modifiedResponse.statusCode() + ")" : "null") +
-                                        ", getResponse: " + (entry.getResponse() != null ? "present (" + entry.getResponse().statusCode() + ")" : "null"));
+                api.logging().logToOutput("UI Display - Entry ID: " + entry.getId() +
+                        ", wasModifiedSent: " + entry.wasModifiedRequestSent() +
+                        ", originalResponse: "
+                        + (originalResponse != null ? "present (" + originalResponse.statusCode() + ")" : "null") +
+                        ", modifiedResponse: "
+                        + (modifiedResponse != null ? "present (" + modifiedResponse.statusCode() + ")" : "null") +
+                        ", getResponse: "
+                        + (entry.getResponse() != null ? "present (" + entry.getResponse().statusCode() + ")"
+                                : "null"));
 
                 // If the modified request was sent, show its response in the original tab
-                // because we don't have the "true" original response (we never sent the original request)
+                // because we don't have the "true" original response (we never sent the
+                // original request)
                 if (originalResponse != null) {
                     originalResponseEditor.setResponse(originalResponse);
                 } else if (entry.wasModifiedRequestSent() && modifiedResponse != null) {
-                    // Show modified response in original tab when modified request was actually sent
+                    // Show modified response in original tab when modified request was actually
+                    // sent
                     originalResponseEditor.setResponse(modifiedResponse);
                 } else if (entry.getResponse() != null) {
                     originalResponseEditor.setResponse(entry.getResponse());
                 }
 
                 if (modifiedResponse != null) {
-                    api.logging().logToOutput("  Setting modified response editor (case 1): status=" + modifiedResponse.statusCode());
+                    api.logging().logToOutput(
+                            "  Setting modified response editor (case 1): status=" + modifiedResponse.statusCode());
                     modifiedResponseEditor.setResponse(modifiedResponse);
                     responseTabbedPane.setEnabledAt(1, true);
                 } else if (entry.wasModifiedRequestSent() && entry.getResponse() != null) {
                     // If modified request was sent but modifiedResponse is somehow null,
                     // the response we have IS the modified response
-                    api.logging().logToOutput("  Setting modified response editor (case 2): status=" + entry.getResponse().statusCode());
+                    api.logging().logToOutput(
+                            "  Setting modified response editor (case 2): status=" + entry.getResponse().statusCode());
                     modifiedResponseEditor.setResponse(entry.getResponse());
                     responseTabbedPane.setEnabledAt(1, true);
                 } else {
@@ -376,7 +418,8 @@ public class RequestTablePanel extends JPanel {
         if (background == null) {
             return Color.BLACK;
         }
-        double luminance = (0.2126 * background.getRed()) + (0.7152 * background.getGreen()) + (0.0722 * background.getBlue());
+        double luminance = (0.2126 * background.getRed()) + (0.7152 * background.getGreen())
+                + (0.0722 * background.getBlue());
         return luminance < 140 ? Color.WHITE : Color.BLACK;
     }
 
@@ -611,4 +654,19 @@ public class RequestTablePanel extends JPanel {
 
     private static final Color DIFF_ADDED_COLOR = new Color(0x1E88E5);
     private static final Color DIFF_REMOVED_COLOR = new Color(0xE53935);
+
+    private void updateFilter() {
+        String text = userRoleFilterField.getText();
+        if (text == null || text.trim().isEmpty()) {
+            sorter.setRowFilter(null);
+        } else {
+            // Filter by "User Role" column (index 1)
+            try {
+                sorter.setRowFilter(RowFilter.regexFilter("(?i)" + text.trim(), 1));
+            } catch (java.util.regex.PatternSyntaxException e) {
+                // Invalid regex, maybe fallback to literal contains?
+                // For now, ignore
+            }
+        }
+    }
 }

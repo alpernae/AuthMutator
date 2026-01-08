@@ -6,14 +6,12 @@ import model.RequestLogModel;
 import ui.MainPanel;
 
 public class Extension implements BurpExtension {
-    private MontoyaApi api;
     private RequestLogModel requestLogModel;
     private ExtensionConfig config;
     private RequestHandler requestHandler;
 
     @Override
     public void initialize(MontoyaApi api) {
-        this.api = api;
         api.extension().setName("Auth Mutator");
 
         // Initialize the config
@@ -32,7 +30,7 @@ public class Extension implements BurpExtension {
 
         api.logging().logToOutput("Auth Mutator Loaded Successfully!");
         api.logging().logToOutput("Author: ALPEREN ERGEL (@alpernae)");
-        api.logging().logToOutput("Version: 0.1.0.");
+        api.logging().logToOutput("Version: 1.2");
 
         api.extension().registerUnloadingHandler(() -> {
             api.logging().logToOutput("Auth Mutator Unload");

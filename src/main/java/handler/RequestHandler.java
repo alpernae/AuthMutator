@@ -12,7 +12,11 @@ import model.ExtensionConfig;
 import model.RequestLogEntry;
 import model.RequestLogModel;
 import model.ReplaceRule;
+import model.UserRole;
+import model.AuthToken;
+import model.HighlightRule;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -29,6 +33,8 @@ public class RequestHandler implements HttpHandler {
     private final ExtensionConfig config;
     private final AtomicInteger requestCounter;
     private List<ReplaceRule> replaceRules;
+    private List<HighlightRule> highlightRules;
+    private List<UserRole> userRoles;
     private final ConcurrentHashMap<Integer, Pending> pendingByMessageId = new ConcurrentHashMap<>();
     private final ExecutorService previewExecutor;
     private final AtomicInteger previewThreadCounter = new AtomicInteger(1);
@@ -43,22 +49,24 @@ public class RequestHandler implements HttpHandler {
         volatile Integer tableEntryId;
         volatile HttpResponse previewModifiedResponse;
         volatile HttpResponse unauthResponse;
-        volatile boolean awaitingModifiedPreviewResponse;
         volatile boolean awaitingUnauthResponse;
+
+        final String appliedRoles;
 
         Pending(HttpRequest original,
                 HttpRequest modified,
                 HttpRequest unauth,
                 boolean unauthTesting,
                 boolean preview,
-                boolean modifiedSent) {
+                boolean modifiedSent,
+                String appliedRoles) {
             this.original = original;
             this.modified = modified;
             this.unauth = unauth;
             this.unauthTesting = unauthTesting;
             this.preview = preview;
             this.modifiedSent = modifiedSent;
-            this.awaitingModifiedPreviewResponse = preview && modified != null;
+            this.appliedRoles = appliedRoles;
             this.awaitingUnauthResponse = unauth != null;
         }
 
@@ -77,6 +85,8 @@ public class RequestHandler implements HttpHandler {
         this.config = config;
         this.requestCounter = new AtomicInteger(1);
         this.replaceRules = List.of();
+        this.highlightRules = new ArrayList<>();
+        this.userRoles = List.of();
         this.previewExecutor = Executors.newCachedThreadPool(r -> {
             Thread thread = new Thread(r, "idor-auth-preview-" + previewThreadCounter.getAndIncrement());
             thread.setDaemon(true);
@@ -88,15 +98,27 @@ public class RequestHandler implements HttpHandler {
         this.replaceRules = List.copyOf(rules);
     }
 
+    public void setHighlightRules(List<model.HighlightRule> rules) {
+        this.highlightRules.clear();
+        if (rules != null) {
+            this.highlightRules.addAll(rules);
+        }
+    }
+
+    public void setUserRoles(List<UserRole> roles) {
+        this.userRoles = List.copyOf(roles);
+    }
+
     @Override
     public RequestToBeSentAction handleHttpRequestToBeSent(HttpRequestToBeSent requestToBeSent) {
-        api.logging().logToOutput(">>> REQUEST HANDLER CALLED - URL: " + requestToBeSent.url() + ", enabled: " + config.isExtensionEnabled());
-        
+        api.logging().logToOutput(">>> REQUEST HANDLER CALLED - URL: " + requestToBeSent.url() + ", enabled: "
+                + config.isExtensionEnabled());
+
         // Check if extension is enabled
         if (!config.isExtensionEnabled()) {
             return RequestToBeSentAction.continueWith(requestToBeSent);
         }
-        
+
         // Check if we should process this request
         if (!config.isInterceptEnabled()) {
             return RequestToBeSentAction.continueWith(requestToBeSent);
@@ -112,7 +134,8 @@ public class RequestHandler implements HttpHandler {
         ToolType toolType = requestToBeSent.toolSource() != null ? requestToBeSent.toolSource().toolType() : null;
         boolean toolEnabled = config.isToolEnabled(toolType);
 
-        // Proxy preview: if tool is PROXY and not enabled but preview is on, we compute diffs without modifying
+        // Proxy preview: if tool is PROXY and not enabled but preview is on, we compute
+        // diffs without modifying
         boolean proxyPreview = (toolType == ToolType.PROXY) && !toolEnabled && config.isPreviewInProxy();
 
         // Check scope if enabled
@@ -123,8 +146,7 @@ public class RequestHandler implements HttpHandler {
         int messageId = requestToBeSent.messageId();
         HttpRequest originalSnapshot = HttpRequest.httpRequest(
                 requestToBeSent.httpService(),
-                requestToBeSent.toString()
-        );
+                requestToBeSent.toString());
 
         boolean transformsAllowed = toolEnabled || proxyPreview;
         boolean unauthTestingEnabled = transformsAllowed && config.isUnauthenticatedTesting();
@@ -133,9 +155,23 @@ public class RequestHandler implements HttpHandler {
         boolean shouldComputeRules = shouldApplyRulesForMain || shouldApplyRulesForUnauth || proxyPreview;
 
         HttpRequest modifiedRequest = null;
+        List<String> appliedRolesList = new java.util.ArrayList<>();
         if (shouldComputeRules) {
-            HttpRequest candidate = applyReplaceRules(requestToBeSent);
-            if (candidate != null && !candidate.toString().equals(requestToBeSent.toString())) {
+            HttpRequest candidate = requestToBeSent;
+
+            // Apply User Roles first
+            HttpRequest afterRoles = applyUserRoles(candidate);
+            if (afterRoles != null) {
+                candidate = afterRoles;
+            }
+
+            // Apply Replace Rules
+            HttpRequest afterRules = applyReplaceRules(candidate, appliedRolesList);
+            if (afterRules != null) {
+                candidate = afterRules;
+            }
+
+            if (!candidate.toString().equals(requestToBeSent.toString())) {
                 modifiedRequest = candidate;
             }
         }
@@ -162,31 +198,33 @@ public class RequestHandler implements HttpHandler {
                 unauthRequest,
                 unauthTestingEnabled,
                 proxyPreview,
-                modifiedRequestSent
-        );
+                modifiedRequestSent,
+                String.join(", ", appliedRolesList));
 
-        boolean shouldTrack = transformsAllowed && (pending.hasModifiedChange() || pending.hasUnauthVariant() || proxyPreview);
+        boolean shouldTrack = transformsAllowed
+                && (pending.hasModifiedChange() || pending.hasUnauthVariant() || proxyPreview);
 
-        api.logging().logToOutput("Request handler - messageId: " + messageId + 
-                                ", toolEnabled: " + toolEnabled + 
-                                ", proxyPreview: " + proxyPreview +
-                                ", shouldTrack: " + shouldTrack + 
-                                ", modifiedRequestSent: " + modifiedRequestSent +
-                                ", hasModifiedChange: " + pending.hasModifiedChange());
+        api.logging().logToOutput("Request handler - messageId: " + messageId +
+                ", toolEnabled: " + toolEnabled +
+                ", proxyPreview: " + proxyPreview +
+                ", shouldTrack: " + shouldTrack +
+                ", modifiedRequestSent: " + modifiedRequestSent +
+                ", hasModifiedChange: " + pending.hasModifiedChange());
 
         if (proxyPreview && (pending.hasModifiedChange() || pending.hasUnauthVariant())) {
             int id = requestCounter.getAndIncrement();
             RequestLogEntry entry = new RequestLogEntry(
                     id,
                     originalSnapshot,
-                    pending.hasModifiedChange() ? modifiedRequest : null,
+                    modifiedRequest,
                     pending.hasUnauthVariant() ? unauthRequest : null,
                     null,
                     null,
                     null,
-                    false,
-                    pending.unauthTesting
-            );
+                    modifiedRequest != null,
+                    config.isUnauthenticatedTesting(),
+                    "",
+                    pending.appliedRoles);
             requestLogModel.addEntry(entry);
             pending.tableEntryId = id;
         }
@@ -219,6 +257,7 @@ public class RequestHandler implements HttpHandler {
 
     public void shutdown() {
         replaceRules = List.of();
+        userRoles = List.of();
         pendingByMessageId.clear();
         previewExecutor.shutdownNow();
         try {
@@ -232,13 +271,14 @@ public class RequestHandler implements HttpHandler {
 
     @Override
     public ResponseReceivedAction handleHttpResponseReceived(HttpResponseReceived responseReceived) {
-        api.logging().logToOutput(">>> RESPONSE HANDLER CALLED - URL: " + responseReceived.initiatingRequest().url() + ", status: " + responseReceived.statusCode());
-        
+        api.logging().logToOutput(">>> RESPONSE HANDLER CALLED - URL: " + responseReceived.initiatingRequest().url()
+                + ", status: " + responseReceived.statusCode());
+
         // Check if extension is enabled
         if (!config.isExtensionEnabled()) {
             return ResponseReceivedAction.continueWith(responseReceived);
         }
-        
+
         // Check scope if enabled
         if (config.isOnlyInScope() && !api.scope().isInScope(responseReceived.initiatingRequest().url())) {
             return ResponseReceivedAction.continueWith(responseReceived);
@@ -257,7 +297,8 @@ public class RequestHandler implements HttpHandler {
         int messageId = responseReceived.messageId();
         Pending pending = pendingByMessageId.remove(messageId);
 
-        api.logging().logToOutput("Response handler - messageId: " + messageId + ", pending: " + (pending != null ? "found" : "NOT FOUND"));
+        api.logging().logToOutput("Response handler - messageId: " + messageId + ", pending: "
+                + (pending != null ? "found" : "NOT FOUND"));
 
         if (pending != null && (toolEnabled || proxyPreview)) {
             HttpResponse httpResponse = responseReceived;
@@ -280,8 +321,9 @@ public class RequestHandler implements HttpHandler {
                                 modifiedResponse != null ? modifiedResponse : existing.getModifiedResponse(),
                                 unauthResponse != null ? unauthResponse : existing.getUnauthResponse(),
                                 false,
-                                pending.unauthTesting
-                        );
+                                pending.unauthTesting,
+                                existing.getNotes(),
+                                pending.appliedRoles);
                         requestLogModel.replaceById(entryId, updated);
                     });
                 }
@@ -289,24 +331,27 @@ public class RequestHandler implements HttpHandler {
                 boolean shouldLog = pending.hasModifiedChange() || pending.hasUnauthVariant();
                 if (shouldLog) {
                     int id = requestCounter.getAndIncrement();
-                    // When modified request was sent, the response we receive is the modified response
-                    // When original request was sent, the response we receive is the original response
+                    // When modified request was sent, the response we receive is the modified
+                    // response
+                    // When original request was sent, the response we receive is the original
+                    // response
                     HttpResponse originalResponse = pending.modifiedSent ? null : httpResponse;
                     HttpResponse modifiedResponse = pending.modifiedSent ? httpResponse : null;
-                    
-                    api.logging().logToOutput("Response received - modifiedSent: " + pending.modifiedSent + 
-                                            ", hasModifiedChange: " + pending.hasModifiedChange() + 
-                                            ", originalResponse: " + (originalResponse != null ? "present" : "null") + 
-                                            ", modifiedResponse: " + (modifiedResponse != null ? "present" : "null") +
-                                            ", response status: " + (httpResponse != null ? httpResponse.statusCode() : "null") +
-                                            ", response body length: " + (httpResponse != null ? httpResponse.body().length() : 0));
-                    
+
+                    api.logging().logToOutput("Response received - modifiedSent: " + pending.modifiedSent +
+                            ", hasModifiedChange: " + pending.hasModifiedChange() +
+                            ", originalResponse: " + (originalResponse != null ? "present" : "null") +
+                            ", modifiedResponse: " + (modifiedResponse != null ? "present" : "null") +
+                            ", response status: " + (httpResponse != null ? httpResponse.statusCode() : "null") +
+                            ", response body length: " + (httpResponse != null ? httpResponse.body().length() : 0));
+
                     if (httpResponse != null && httpResponse.statusCode() == 202) {
                         api.logging().logToOutput("  *** 202 RESPONSE DETECTED ***");
                         api.logging().logToOutput("  httpResponse object: " + httpResponse);
-                        api.logging().logToOutput("  Will be stored as " + (pending.modifiedSent ? "MODIFIED" : "ORIGINAL") + " response");
+                        api.logging().logToOutput("  Will be stored as "
+                                + (pending.modifiedSent ? "MODIFIED" : "ORIGINAL") + " response");
                     }
-                    
+
                     RequestLogEntry entry = new RequestLogEntry(
                             id,
                             pending.original,
@@ -316,8 +361,9 @@ public class RequestHandler implements HttpHandler {
                             modifiedResponse,
                             pending.unauthResponse,
                             pending.modifiedSent,
-                            pending.unauthTesting
-                    );
+                            pending.unauthTesting,
+                            "",
+                            pending.appliedRoles);
                     requestLogModel.addEntry(entry);
                     pending.tableEntryId = id;
 
@@ -347,7 +393,7 @@ public class RequestHandler implements HttpHandler {
 
                     if (variant == ResponseVariant.MODIFIED) {
                         pending.previewModifiedResponse = response;
-                        pending.awaitingModifiedPreviewResponse = false;
+                        // pending.awaitingModifiedPreviewResponse = false; // logic removed
                     } else {
                         pending.unauthResponse = response;
                         pending.awaitingUnauthResponse = false;
@@ -359,8 +405,7 @@ public class RequestHandler implements HttpHandler {
                             updateEntryResponses(
                                     pending,
                                     variant == ResponseVariant.MODIFIED ? response : null,
-                                    variant == ResponseVariant.UNAUTH ? response : null
-                            );
+                                    variant == ResponseVariant.UNAUTH ? response : null);
                         });
                     }
                 } catch (Exception ex) {
@@ -374,7 +419,8 @@ public class RequestHandler implements HttpHandler {
         }
     }
 
-    private void updateEntryResponses(Pending pending, HttpResponse newModifiedResponse, HttpResponse newUnauthResponse) {
+    private void updateEntryResponses(Pending pending, HttpResponse newModifiedResponse,
+            HttpResponse newUnauthResponse) {
         Integer entryId = pending.tableEntryId;
         if (entryId == null || entryId <= 0) {
             return;
@@ -387,20 +433,23 @@ public class RequestHandler implements HttpHandler {
         RequestLogEntry updated = new RequestLogEntry(
                 entryId,
                 existing.getOriginalRequest() != null ? existing.getOriginalRequest() : pending.original,
-                existing.getModifiedRequest() != null ? existing.getModifiedRequest() : (pending.hasModifiedChange() ? pending.modified : null),
-                existing.getUnauthRequest() != null ? existing.getUnauthRequest() : (pending.hasUnauthVariant() ? pending.unauth : null),
+                existing.getModifiedRequest() != null ? existing.getModifiedRequest()
+                        : (pending.hasModifiedChange() ? pending.modified : null),
+                existing.getUnauthRequest() != null ? existing.getUnauthRequest()
+                        : (pending.hasUnauthVariant() ? pending.unauth : null),
                 existing.getOriginalResponse(),
                 newModifiedResponse != null ? newModifiedResponse : existing.getModifiedResponse(),
                 newUnauthResponse != null ? newUnauthResponse : existing.getUnauthResponse(),
                 existing.wasModifiedRequestSent(),
-                existing.isUnauthenticatedTesting() || pending.unauthTesting
-        );
+                existing.isUnauthenticatedTesting() || pending.unauthTesting,
+                existing.getNotes(),
+                pending.appliedRoles);
         requestLogModel.replaceById(entryId, updated);
     }
 
     private void markVariantComplete(Pending pending, ResponseVariant variant) {
         if (variant == ResponseVariant.MODIFIED) {
-            pending.awaitingModifiedPreviewResponse = false;
+            // No action needed for modified variant completion tracking anymore
         } else {
             pending.awaitingUnauthResponse = false;
         }
@@ -433,7 +482,47 @@ public class RequestHandler implements HttpHandler {
         return changed ? current : request;
     }
 
-    private HttpRequest applyReplaceRules(HttpRequest request) {
+    private HttpRequest applyUserRoles(HttpRequest request) {
+        HttpRequest current = request;
+        boolean modified = false;
+
+        for (UserRole role : userRoles) {
+            if (!role.isEnabled()) {
+                continue;
+            }
+
+            api.logging().logToOutput("  Applying Role: " + role.getName());
+
+            for (AuthToken token : role.getTokens()) {
+                if (token.getType() == AuthToken.Type.HEADER) {
+                    current = current.withUpdatedHeader(token.getName(), token.getValue());
+                    // If header didn't exist, withUpdatedHeader might not add it?
+                    // Verify Montoya API behavior: "Updates the value of the header with the
+                    // specified name. If the header does not exist, it is added."
+                    // Actually, let's check standard behavior. usually updated -> replaces. added
+                    // -> adds.
+                    // If it doesn't exist, updated usually adds. But let's be safe.
+                    // Montoya API: HttpRequest.withUpdatedHeader(name, value) "Returns a new
+                    // HttpRequest with the header with the specified name updated to the specified
+                    // value. If the header is not present, it is added."
+                    // Perfect.
+                    modified = true;
+                } else if (token.getType() == AuthToken.Type.COOKIE) {
+                    // Start by removing existing cookie with same name to ensure clean state?
+                    // Or just use withUpdatedParameters if it's a parameter.
+                    // Cookies are parameters in Montoya.
+                    HttpParameter cookie = HttpParameter.cookieParameter(token.getName(), token.getValue());
+                    current = current.withUpdatedParameters(cookie);
+                    // "Returns a new HttpRequest with the specified parameter updated. If the
+                    // parameter is not present, it is added."
+                    modified = true;
+                }
+            }
+        }
+        return modified ? current : null;
+    }
+
+    private HttpRequest applyReplaceRules(HttpRequest request, List<String> appliedRolesCollector) {
         HttpRequest modifiedRequest = request;
         boolean wasModified = false;
 
@@ -444,14 +533,15 @@ public class RequestHandler implements HttpHandler {
                 api.logging().logToOutput("  Skipping disabled rule: " + rule.getName());
                 continue;
             }
-            if (!rule.hasOperations()) {
-                api.logging().logToOutput("  Rule has no operations: " + rule.getName());
+            if (!rule.hasWorkToDo()) {
+                api.logging().logToOutput("  Rule has no operations and no target role: " + rule.getName());
                 continue;
             }
 
             try {
-                api.logging().logToOutput("  Applying rule: " + rule.getName() + " (" + rule.getOperations().size() + " operations)");
-                HttpRequest newRequest = applyRule(modifiedRequest, rule);
+                api.logging().logToOutput(
+                        "  Applying rule: " + rule.getName() + " (" + rule.getOperations().size() + " operations)");
+                HttpRequest newRequest = applyRule(modifiedRequest, rule, appliedRolesCollector);
                 if (newRequest != null && !newRequest.toString().equals(modifiedRequest.toString())) {
                     modifiedRequest = newRequest;
                     wasModified = true;
@@ -468,15 +558,30 @@ public class RequestHandler implements HttpHandler {
         return wasModified ? modifiedRequest : null;
     }
 
-    private HttpRequest applyRule(HttpRequest request, ReplaceRule rule) {
+    private HttpRequest applyRule(HttpRequest request, ReplaceRule rule, List<String> appliedRolesCollector) {
         HttpRequest current = request;
         boolean modified = false;
 
+        if (rule.getTargetRole() != null && !rule.getTargetRole().isEmpty()) {
+            UserRole role = findUserRole(rule.getTargetRole());
+            if (role != null) {
+                HttpRequest withAuth = applyAuthProfile(current, role.getTokens());
+                if (!withAuth.toString().equals(current.toString())) {
+                    current = withAuth;
+                    modified = true;
+                    appliedRolesCollector.add(role.getName());
+                    api.logging().logToOutput("    ✓ Applied Role: " + role.getName());
+                }
+            }
+        }
+
+        // Iterate through operations
         for (ReplaceRule.ReplaceOperation operation : rule.getOperations()) {
             HttpRequest updated = applyOperation(current, operation);
             if (updated != null && !updated.toString().equals(current.toString())) {
                 current = updated;
                 modified = true;
+                // Operation type SET_AUTH_PROFILE removed.
                 api.logging().logToOutput("    ✓ Operation applied: " + operation.describe());
             } else {
                 api.logging().logToOutput("    ✗ Operation had no effect: " + operation.describe());
@@ -504,7 +609,58 @@ public class RequestHandler implements HttpHandler {
             case MATCH_PARAM_NAME_REPLACE_VALUE -> setParameterValueByName(request, operation);
             case MATCH_COOKIE_NAME_REPLACE_VALUE -> setCookieValueByName(request, operation);
             case MATCH_HEADER_NAME_REPLACE_VALUE -> setHeaderValueByName(request, operation);
+            default -> request; // Handle unknown operation types gracefully
         };
+    }
+
+    private HttpRequest applyAuthProfile(HttpRequest request, List<AuthToken> authTokens) {
+        HttpRequest current = request;
+
+        for (AuthToken token : authTokens) {
+            String name = token.getName();
+            String value = token.getValue();
+
+            // Validate header name
+            if (name == null || name.trim().isEmpty()) {
+                continue;
+            }
+            String saneName = name.trim();
+            if (saneName.endsWith(":")) {
+                saneName = saneName.substring(0, saneName.length() - 1);
+            }
+
+            switch (token.getType()) {
+                case HEADER -> {
+                    // Try to update existing header first
+                    if (current.headerValue(saneName) != null) {
+                        current = current.withUpdatedHeader(saneName, value);
+                    } else {
+                        current = current.withAddedHeader(saneName, value);
+                    }
+                }
+                case COOKIE -> {
+                    // Update or add cookie
+                    if (current.parameterValue(saneName,
+                            burp.api.montoya.http.message.params.HttpParameterType.COOKIE) != null) {
+                        current = current.withUpdatedParameters(
+                                burp.api.montoya.http.message.params.HttpParameter.cookieParameter(saneName, value));
+                    } else {
+                        current = current.withAddedParameters(
+                                burp.api.montoya.http.message.params.HttpParameter.cookieParameter(saneName, value));
+                    }
+                }
+            }
+        }
+        return current;
+    }
+
+    private UserRole findUserRole(String name) {
+        if (userRoles == null)
+            return null;
+        return userRoles.stream()
+                .filter(r -> r.getName().equals(name))
+                .findFirst()
+                .orElse(null);
     }
 
     private HttpRequest replaceInRequestString(HttpRequest request, ReplaceRule.ReplaceOperation operation) {
@@ -1039,44 +1195,45 @@ public class RequestHandler implements HttpHandler {
     }
 
     /**
-     * Checks if the request is for a static file (images, CSS, JS, fonts, audio, video, etc.)
+     * Checks if the request is for a static file (images, CSS, JS, fonts, audio,
+     * video, etc.)
      * based on URL path extension and common content-type indicators.
      */
     private boolean isStaticFile(HttpRequestToBeSent request) {
         String path = request.path().toLowerCase();
-        
+
         // Also check the full URL in case the path doesn't include the file extension
         String url = request.url().toLowerCase();
-        
+
         // Check for common static file extensions
         String[] staticExtensions = {
-            // Images
-            ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".ico", ".webp", ".tiff", ".tif",
-            // CSS/Styles
-            ".css", ".scss", ".sass", ".less",
-            // JavaScript
-            ".js", ".jsx", ".ts", ".tsx", ".mjs",
-            // Fonts
-            ".woff", ".woff2", ".ttf", ".otf", ".eot",
-            // Audio
-            ".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac", ".wma",
-            // Video
-            ".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".mkv", ".m4v",
-            // Documents (often static)
-            ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-            // Archives
-            ".zip", ".rar", ".tar", ".gz", ".7z",
-            // Other common static resources
-            ".swf", ".xml", ".json", ".map", ".manifest"
+                // Images
+                ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".ico", ".webp", ".tiff", ".tif",
+                // CSS/Styles
+                ".css", ".scss", ".sass", ".less",
+                // JavaScript
+                ".js", ".jsx", ".ts", ".tsx", ".mjs",
+                // Fonts
+                ".woff", ".woff2", ".ttf", ".otf", ".eot",
+                // Audio
+                ".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac", ".wma",
+                // Video
+                ".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".mkv", ".m4v",
+                // Documents (often static)
+                ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+                // Archives
+                ".zip", ".rar", ".tar", ".gz", ".7z",
+                // Other common static resources
+                ".swf", ".xml", ".json", ".map", ".manifest"
         };
-        
+
         // Check path first (most common case)
         for (String ext : staticExtensions) {
             if (path.endsWith(ext)) {
                 return true;
             }
         }
-        
+
         // Check URL (in case path is just "/" but URL has extension)
         for (String ext : staticExtensions) {
             // Check if URL ends with extension or has it before query string
@@ -1092,7 +1249,7 @@ public class RequestHandler implements HttpHandler {
                 }
             }
         }
-        
+
         // Check for query-string-based static files (e.g., /asset?file=image.png)
         if (path.contains("?")) {
             String queryPart = path.substring(path.indexOf("?"));
@@ -1102,46 +1259,47 @@ public class RequestHandler implements HttpHandler {
                 }
             }
         }
-        
+
         return false;
     }
 
     /**
-     * Checks if the response is for a static file based on the initiating request path.
+     * Checks if the response is for a static file based on the initiating request
+     * path.
      */
     private boolean isStaticFileResponse(HttpResponseReceived responseReceived) {
         String path = responseReceived.initiatingRequest().path().toLowerCase();
         String url = responseReceived.initiatingRequest().url().toLowerCase();
-        
+
         // Check for common static file extensions
         String[] staticExtensions = {
-            // Images
-            ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".ico", ".webp", ".tiff", ".tif",
-            // CSS/Styles
-            ".css", ".scss", ".sass", ".less",
-            // JavaScript
-            ".js", ".jsx", ".ts", ".tsx", ".mjs",
-            // Fonts
-            ".woff", ".woff2", ".ttf", ".otf", ".eot",
-            // Audio
-            ".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac", ".wma",
-            // Video
-            ".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".mkv", ".m4v",
-            // Documents (often static)
-            ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-            // Archives
-            ".zip", ".rar", ".tar", ".gz", ".7z",
-            // Other common static resources
-            ".swf", ".xml", ".json", ".map", ".manifest"
+                // Images
+                ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".ico", ".webp", ".tiff", ".tif",
+                // CSS/Styles
+                ".css", ".scss", ".sass", ".less",
+                // JavaScript
+                ".js", ".jsx", ".ts", ".tsx", ".mjs",
+                // Fonts
+                ".woff", ".woff2", ".ttf", ".otf", ".eot",
+                // Audio
+                ".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac", ".wma",
+                // Video
+                ".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".mkv", ".m4v",
+                // Documents (often static)
+                ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+                // Archives
+                ".zip", ".rar", ".tar", ".gz", ".7z",
+                // Other common static resources
+                ".swf", ".xml", ".json", ".map", ".manifest"
         };
-        
+
         // Check path first
         for (String ext : staticExtensions) {
             if (path.endsWith(ext)) {
                 return true;
             }
         }
-        
+
         // Check URL
         for (String ext : staticExtensions) {
             if (url.endsWith(ext)) {
@@ -1156,7 +1314,7 @@ public class RequestHandler implements HttpHandler {
                 }
             }
         }
-        
+
         // Check for query-string-based static files
         if (path.contains("?")) {
             String queryPart = path.substring(path.indexOf("?"));
@@ -1166,8 +1324,7 @@ public class RequestHandler implements HttpHandler {
                 }
             }
         }
-        
+
         return false;
     }
 }
-
