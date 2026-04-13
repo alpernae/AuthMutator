@@ -7,7 +7,7 @@ import java.awt.*;
 
 public class QuickControlsPanel extends JPanel {
     private final ExtensionConfig config;
-    private JToggleButton enableButton;
+    private JButton enableButton;
     private JCheckBox affectProxyCheckbox;
     private JCheckBox previewProxyCheckbox;
     private JCheckBox onlyInScopeCheckbox;
@@ -17,23 +17,26 @@ public class QuickControlsPanel extends JPanel {
     private final Runnable onConfigChanged;
     private final Runnable onImport;
     private final Runnable onExport;
+    private final Runnable onClearLog;
 
-    public QuickControlsPanel(ExtensionConfig config, Runnable onConfigChanged, Runnable onImport, Runnable onExport) {
+    public QuickControlsPanel(ExtensionConfig config, Runnable onConfigChanged, Runnable onImport, Runnable onExport,
+            Runnable onClearLog) {
         this.config = config;
         this.onConfigChanged = onConfigChanged;
         this.onImport = onImport;
         this.onExport = onExport;
+        this.onClearLog = onClearLog;
         setLayout(new BorderLayout());
         setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createTitledBorder("Quick Controls"),
-                BorderFactory.createEmptyBorder(5, 5, 5, 5)));
+            BorderFactory.createEmptyBorder(1, 4, 2, 4)));
 
         createLayout();
     }
 
     private void createLayout() {
         // Panel for checkboxes (left)
-        JPanel leftPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 15, 0));
+        JPanel leftPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 1));
 
         affectProxyCheckbox = new JCheckBox("Affect Proxy (modify browser traffic)");
         affectProxyCheckbox.setSelected(config.isApplyToProxy());
@@ -92,7 +95,7 @@ public class QuickControlsPanel extends JPanel {
         leftPanel.add(applyRulesToUnauthCheckbox);
 
         // Right panel for Actions and Toggle
-        JPanel rightPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+        JPanel rightPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 1));
 
         // Import/Export Buttons
         JButton importBtn = new JButton("Import State"); // Standard swing button or PrimaryButton? Let's use JButton
@@ -103,52 +106,56 @@ public class QuickControlsPanel extends JPanel {
         // but PrimaryButton is in ui package.
         // Let's use PrimaryButton for consistency if I import it.
         // QuickControlsPanel currently doesn't import PrimaryButton. I'll use JButton.
-        importBtn.setMargin(new Insets(2, 6, 2, 6));
+        importBtn.setMargin(new Insets(1, 8, 1, 8));
         importBtn.addActionListener(e -> {
             if (onImport != null)
                 onImport.run();
         });
 
         JButton exportBtn = new JButton("Export State");
-        exportBtn.setMargin(new Insets(2, 6, 2, 6));
+        exportBtn.setMargin(new Insets(1, 8, 1, 8));
         exportBtn.addActionListener(e -> {
             if (onExport != null)
                 onExport.run();
         });
 
-        // Enable Toggle
-        enableButton = new JToggleButton("Extension: ENABLED");
-        enableButton.setSelected(config.isExtensionEnabled());
-        enableButton.setOpaque(true);
-        enableButton.setMargin(new Insets(4, 10, 4, 10)); // Bigger button
-        enableButton.setFocusPainted(false);
+        JButton clearLogBtn = new JButton("Clear Log");
+        clearLogBtn.setMargin(new Insets(1, 8, 1, 8));
+        clearLogBtn.setToolTipText("Remove all entries from the request log table");
+        clearLogBtn.addActionListener(e -> {
+            if (onClearLog == null) {
+                return;
+            }
+            int answer = JOptionPane.showConfirmDialog(
+                    this,
+                    "Clear all request log entries?",
+                    "Clear Request Log",
+                    JOptionPane.YES_NO_OPTION,
+                    JOptionPane.WARNING_MESSAGE);
+            if (answer == JOptionPane.YES_OPTION) {
+                onClearLog.run();
+            }
+        });
+
+        // Enable/Disable button
+        enableButton = new JButton();
+        enableButton.setMargin(new Insets(1, 8, 1, 8));
         enableButton.addActionListener(e -> {
-            boolean enabled = enableButton.isSelected();
+            boolean enabled = !config.isExtensionEnabled();
             config.setExtensionEnabled(enabled);
             updateEnableButtonState();
-            // Enable/disable other controls
-            affectProxyCheckbox.setEnabled(enabled);
-            previewProxyCheckbox.setEnabled(enabled);
-            onlyInScopeCheckbox.setEnabled(enabled);
-            excludeStaticFilesCheckbox.setEnabled(enabled);
-            unauthTestingCheckbox.setEnabled(enabled);
-            applyRulesToUnauthCheckbox.setEnabled(enabled && unauthTestingCheckbox.isSelected());
+            updateControlEnablement();
             signalConfigChanged();
         });
 
         updateEnableButtonState();
-        affectProxyCheckbox.setEnabled(config.isExtensionEnabled());
-        previewProxyCheckbox.setEnabled(config.isExtensionEnabled());
-        onlyInScopeCheckbox.setEnabled(config.isExtensionEnabled());
-        excludeStaticFilesCheckbox.setEnabled(config.isExtensionEnabled());
-        boolean extensionEnabled = config.isExtensionEnabled();
-        unauthTestingCheckbox.setEnabled(extensionEnabled);
-        applyRulesToUnauthCheckbox.setEnabled(extensionEnabled && unauthTestingCheckbox.isSelected());
+        updateControlEnablement();
 
         rightPanel.add(importBtn);
         rightPanel.add(exportBtn);
+        rightPanel.add(clearLogBtn);
         // Spacer
-        rightPanel.add(Box.createHorizontalStrut(10));
+        rightPanel.add(Box.createHorizontalStrut(6));
         rightPanel.add(enableButton);
 
         add(leftPanel, BorderLayout.CENTER); // Changed to CENTER so it takes space
@@ -156,37 +163,37 @@ public class QuickControlsPanel extends JPanel {
     }
 
     public void refreshFromConfig() {
-        enableButton.setSelected(config.isExtensionEnabled());
         affectProxyCheckbox.setSelected(config.isApplyToProxy());
         previewProxyCheckbox.setSelected(config.isPreviewInProxy());
         onlyInScopeCheckbox.setSelected(config.isOnlyInScope());
         excludeStaticFilesCheckbox.setSelected(config.isExcludeStaticFiles());
         unauthTestingCheckbox.setSelected(config.isUnauthenticatedTesting());
         applyRulesToUnauthCheckbox.setSelected(config.isApplyRulesToUnauthenticatedRequest());
-        affectProxyCheckbox.setEnabled(config.isExtensionEnabled());
-        previewProxyCheckbox.setEnabled(config.isExtensionEnabled());
-        onlyInScopeCheckbox.setEnabled(config.isExtensionEnabled());
-        excludeStaticFilesCheckbox.setEnabled(config.isExtensionEnabled());
-        boolean extensionEnabled = config.isExtensionEnabled();
-        unauthTestingCheckbox.setEnabled(extensionEnabled);
-        applyRulesToUnauthCheckbox.setEnabled(extensionEnabled && unauthTestingCheckbox.isSelected());
+        updateControlEnablement();
         updateEnableButtonState();
     }
 
     private void updateEnableButtonState() {
-        boolean enabled = enableButton.isSelected();
-        enableButton.setText(enabled ? "Extension: ENABLED" : "Extension: DISABLED");
-        enableButton.setBackground(enabled ? new Color(144, 238, 144) : new Color(255, 160, 160));
-        enableButton.setForeground(shouldUseDarkText() ? Color.BLACK : Color.DARK_GRAY);
+        boolean enabled = config.isExtensionEnabled();
+        enableButton.setText(enabled ? "Extension: Enabled" : "Extension: Disabled");
+        Color buttonBackground = UIManager.getColor("Button.background");
+        Color buttonForeground = UIManager.getColor("Button.foreground");
+        if (buttonBackground != null) {
+            enableButton.setBackground(buttonBackground);
+        }
+        if (buttonForeground != null) {
+            enableButton.setForeground(buttonForeground);
+        }
     }
 
-    private boolean shouldUseDarkText() {
-        Color bg = getBackground();
-        int brightness = (int) Math.sqrt(
-                bg.getRed() * bg.getRed() * .241 +
-                        bg.getGreen() * bg.getGreen() * .691 +
-                        bg.getBlue() * bg.getBlue() * .068);
-        return brightness < 160;
+    private void updateControlEnablement() {
+        boolean extensionEnabled = config.isExtensionEnabled();
+        affectProxyCheckbox.setEnabled(extensionEnabled);
+        previewProxyCheckbox.setEnabled(extensionEnabled);
+        onlyInScopeCheckbox.setEnabled(extensionEnabled);
+        excludeStaticFilesCheckbox.setEnabled(extensionEnabled);
+        unauthTestingCheckbox.setEnabled(extensionEnabled);
+        applyRulesToUnauthCheckbox.setEnabled(extensionEnabled && unauthTestingCheckbox.isSelected());
     }
 
     private void signalConfigChanged() {

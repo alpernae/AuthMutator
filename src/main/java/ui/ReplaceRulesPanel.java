@@ -8,6 +8,8 @@ import model.HighlightRule;
 import javax.swing.*;
 import javax.swing.table.TableCellRenderer;
 import java.awt.*;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
@@ -27,6 +29,12 @@ public class ReplaceRulesPanel extends JPanel {
     private javax.swing.table.DefaultTableModel roleTableModel; // Declared
     private JTable roleTable; // Declared
     private HighlightRulesPanel highlightRulesPanel;
+    private JButton editRuleButton;
+    private JButton deleteRuleButton;
+    private JButton toggleRuleButton;
+    private JButton editRoleButton;
+    private JButton deleteRoleButton;
+    private JButton toggleRoleButton;
 
     public ReplaceRulesPanel(MontoyaApi api,
             List<ReplaceRule> initialRules,
@@ -85,6 +93,16 @@ public class ReplaceRulesPanel extends JPanel {
             }
         };
         rulesTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        rulesTable.setAutoCreateRowSorter(true);
+        rulesTable.getSelectionModel().addListSelectionListener(e -> updateRuleButtons());
+        rulesTable.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                if (e.getClickCount() == 2 && SwingUtilities.isLeftMouseButton(e)) {
+                    editSelectedRule();
+                }
+            }
+        });
         JScrollPane scrollPane = new JScrollPane(rulesTable);
         panel.add(scrollPane, BorderLayout.CENTER);
 
@@ -93,14 +111,14 @@ public class ReplaceRulesPanel extends JPanel {
         JButton addButton = new PrimaryButton("Add Rule");
         addButton.addActionListener(e -> showAddRuleDialog());
 
-        JButton editButton = new PrimaryButton("Edit");
-        editButton.addActionListener(e -> editSelectedRule());
+        editRuleButton = new PrimaryButton("Edit");
+        editRuleButton.addActionListener(e -> editSelectedRule());
 
-        JButton deleteButton = new PrimaryButton("Delete");
-        deleteButton.addActionListener(e -> deleteSelectedRule());
+        deleteRuleButton = new PrimaryButton("Delete");
+        deleteRuleButton.addActionListener(e -> deleteSelectedRule());
 
-        JButton enableButton = new PrimaryButton("Enable/Disable");
-        enableButton.addActionListener(e -> toggleSelectedRule());
+        toggleRuleButton = new PrimaryButton("Enable/Disable");
+        toggleRuleButton.addActionListener(e -> toggleSelectedRule());
 
         JButton importButton = new PrimaryButton("Import JSON");
         importButton.addActionListener(e -> importRules());
@@ -109,11 +127,13 @@ public class ReplaceRulesPanel extends JPanel {
         exportButton.addActionListener(e -> exportRules());
 
         controlPanel.add(addButton);
-        controlPanel.add(editButton);
-        controlPanel.add(deleteButton);
-        controlPanel.add(enableButton);
+        controlPanel.add(editRuleButton);
+        controlPanel.add(deleteRuleButton);
+        controlPanel.add(toggleRuleButton);
         controlPanel.add(importButton);
         controlPanel.add(exportButton);
+
+        updateRuleButtons();
 
         panel.add(controlPanel, BorderLayout.SOUTH);
         return panel;
@@ -147,6 +167,16 @@ public class ReplaceRulesPanel extends JPanel {
 
         roleTable = new JTable(roleTableModel);
         roleTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        roleTable.setAutoCreateRowSorter(true);
+        roleTable.getSelectionModel().addListSelectionListener(e -> updateRoleButtons());
+        roleTable.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                if (e.getClickCount() == 2 && SwingUtilities.isLeftMouseButton(e)) {
+                    editRole();
+                }
+            }
+        });
         panel.add(new JScrollPane(roleTable), BorderLayout.CENTER);
 
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT));
@@ -160,39 +190,40 @@ public class ReplaceRulesPanel extends JPanel {
                 roleTableModel
                         .addRow(new Object[] { newRole.isEnabled(), newRole.getName(),
                                 newRole.getTokens().size() + " tokens" });
+                int modelRow = roleTableModel.getRowCount() - 1;
+                int viewRow = roleTable.convertRowIndexToView(modelRow);
+                if (viewRow >= 0) {
+                    roleTable.setRowSelectionInterval(viewRow, viewRow);
+                    roleTable.scrollRectToVisible(roleTable.getCellRect(viewRow, 0, true));
+                }
                 notifyRolesChanged();
                 api.logging().logToOutput("Added role: " + newRole.getName());
+                updateRoleButtons();
             }
         });
 
-        JButton editBtn = new PrimaryButton("Edit");
-        editBtn.addActionListener(e -> editRole());
+        editRoleButton = new PrimaryButton("Edit");
+        editRoleButton.addActionListener(e -> editRole());
 
-        JButton removeBtn = new PrimaryButton("Delete");
-        removeBtn.addActionListener(e -> {
-            int selected = roleTable.getSelectedRow();
-            if (selected >= 0) {
-                UserRole removedRole = userRoles.remove(selected);
-                roleTableModel.removeRow(selected);
-                notifyRolesChanged();
-                api.logging().logToOutput("Removed role: " + removedRole.getName());
-            }
-        });
+        deleteRoleButton = new PrimaryButton("Delete");
+        deleteRoleButton.addActionListener(e -> deleteSelectedRole());
 
-        JButton toggleBtn = new PrimaryButton("Enable/Disable");
-        toggleBtn.addActionListener(e -> toggleRole());
+        toggleRoleButton = new PrimaryButton("Enable/Disable");
+        toggleRoleButton.addActionListener(e -> toggleRole());
 
         buttons.add(addBtn);
-        buttons.add(editBtn);
-        buttons.add(removeBtn);
-        buttons.add(toggleBtn);
+        buttons.add(editRoleButton);
+        buttons.add(deleteRoleButton);
+        buttons.add(toggleRoleButton);
+
+        updateRoleButtons();
         panel.add(buttons, BorderLayout.SOUTH);
 
         return panel;
     }
 
     private void editRole() {
-        int selected = roleTable.getSelectedRow();
+        int selected = getSelectedRoleModelRow();
         if (selected >= 0) {
             UserRole roleToEdit = userRoles.get(selected);
             AddRoleDialog dialog = new AddRoleDialog((Frame) SwingUtilities.getWindowAncestor(this), roleToEdit);
@@ -210,7 +241,7 @@ public class ReplaceRulesPanel extends JPanel {
     }
 
     private void toggleRole() {
-        int selected = roleTable.getSelectedRow();
+        int selected = getSelectedRoleModelRow();
         if (selected >= 0) {
             UserRole role = userRoles.get(selected);
             role.setEnabled(!role.isEnabled());
@@ -218,6 +249,27 @@ public class ReplaceRulesPanel extends JPanel {
             notifyRolesChanged();
             api.logging().logToOutput("Toggled role: " + role.getName() + " - Enabled: " + role.isEnabled());
         }
+    }
+
+    private void deleteSelectedRole() {
+        int selected = getSelectedRoleModelRow();
+        if (selected < 0) {
+            return;
+        }
+
+        UserRole removedRole = userRoles.remove(selected);
+        roleTableModel.removeRow(selected);
+        notifyRolesChanged();
+        api.logging().logToOutput("Removed role: " + removedRole.getName());
+
+        if (roleTableModel.getRowCount() > 0) {
+            int modelRowToSelect = Math.min(selected, roleTableModel.getRowCount() - 1);
+            int viewRowToSelect = roleTable.convertRowIndexToView(modelRowToSelect);
+            if (viewRowToSelect >= 0) {
+                roleTable.setRowSelectionInterval(viewRowToSelect, viewRowToSelect);
+            }
+        }
+        updateRoleButtons();
     }
 
     private void notifyRolesChanged() {
@@ -260,13 +312,20 @@ public class ReplaceRulesPanel extends JPanel {
         if (newRule != null) {
             rules.add(newRule);
             tableModel.fireTableRowsInserted(rules.size() - 1, rules.size() - 1);
+            int modelRow = rules.size() - 1;
+            int viewRow = rulesTable.convertRowIndexToView(modelRow);
+            if (viewRow >= 0) {
+                rulesTable.setRowSelectionInterval(viewRow, viewRow);
+                rulesTable.scrollRectToVisible(rulesTable.getCellRect(viewRow, 0, true));
+            }
             notifyRulesChanged();
             api.logging().logToOutput("Added rule: " + newRule.getName());
+            updateRuleButtons();
         }
     }
 
     private void editSelectedRule() {
-        int selectedRow = rulesTable.getSelectedRow();
+        int selectedRow = getSelectedRuleModelRow();
         if (selectedRow >= 0) {
             ReplaceRule rule = rules.get(selectedRow);
             java.util.List<String> roleNames = userRoles.stream().map(UserRole::getName).collect(Collectors.toList());
@@ -297,24 +356,81 @@ public class ReplaceRulesPanel extends JPanel {
     // }
 
     private void deleteSelectedRule() {
-        int selectedRow = rulesTable.getSelectedRow();
+        int selectedRow = getSelectedRuleModelRow();
         if (selectedRow >= 0) {
             ReplaceRule rule = rules.get(selectedRow);
             rules.remove(selectedRow);
             tableModel.fireTableRowsDeleted(selectedRow, selectedRow);
             notifyRulesChanged();
             api.logging().logToOutput("Deleted rule: " + rule.getName());
+
+            if (tableModel.getRowCount() > 0) {
+                int modelRowToSelect = Math.min(selectedRow, tableModel.getRowCount() - 1);
+                int viewRowToSelect = rulesTable.convertRowIndexToView(modelRowToSelect);
+                if (viewRowToSelect >= 0) {
+                    rulesTable.setRowSelectionInterval(viewRowToSelect, viewRowToSelect);
+                }
+            }
+            updateRuleButtons();
         }
     }
 
     private void toggleSelectedRule() {
-        int selectedRow = rulesTable.getSelectedRow();
+        int selectedRow = getSelectedRuleModelRow();
         if (selectedRow >= 0) {
             ReplaceRule rule = rules.get(selectedRow);
             rule.setEnabled(!rule.isEnabled());
             tableModel.fireTableRowsUpdated(selectedRow, selectedRow);
             notifyRulesChanged();
             api.logging().logToOutput("Toggled rule: " + rule.getName() + " - Enabled: " + rule.isEnabled());
+        }
+    }
+
+    private int getSelectedRuleModelRow() {
+        if (rulesTable == null) {
+            return -1;
+        }
+        int viewRow = rulesTable.getSelectedRow();
+        if (viewRow < 0) {
+            return -1;
+        }
+        return rulesTable.convertRowIndexToModel(viewRow);
+    }
+
+    private int getSelectedRoleModelRow() {
+        if (roleTable == null) {
+            return -1;
+        }
+        int viewRow = roleTable.getSelectedRow();
+        if (viewRow < 0) {
+            return -1;
+        }
+        return roleTable.convertRowIndexToModel(viewRow);
+    }
+
+    private void updateRuleButtons() {
+        boolean hasSelection = getSelectedRuleModelRow() >= 0;
+        if (editRuleButton != null) {
+            editRuleButton.setEnabled(hasSelection);
+        }
+        if (deleteRuleButton != null) {
+            deleteRuleButton.setEnabled(hasSelection);
+        }
+        if (toggleRuleButton != null) {
+            toggleRuleButton.setEnabled(hasSelection);
+        }
+    }
+
+    private void updateRoleButtons() {
+        boolean hasSelection = getSelectedRoleModelRow() >= 0;
+        if (editRoleButton != null) {
+            editRoleButton.setEnabled(hasSelection);
+        }
+        if (deleteRoleButton != null) {
+            deleteRoleButton.setEnabled(hasSelection);
+        }
+        if (toggleRoleButton != null) {
+            toggleRoleButton.setEnabled(hasSelection);
         }
     }
 
@@ -339,6 +455,7 @@ public class ReplaceRulesPanel extends JPanel {
                         .addRow(new Object[] { role.isEnabled(), role.getName(), role.getTokens().size() + " tokens" });
             }
         }
+        updateRoleButtons();
     }
 
     public void setHighlightRules(List<HighlightRule> rules) {
@@ -365,6 +482,7 @@ public class ReplaceRulesPanel extends JPanel {
         }
         tableModel.fireTableDataChanged();
         notifyRulesChanged();
+        updateRuleButtons();
     }
 
     private void notifyRulesChanged() {

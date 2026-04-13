@@ -452,14 +452,18 @@ public class ReplaceRuleDialog extends JDialog {
             }
 
             hintLabel.setText(switch (type) {
-                case REQUEST_HEADER -> "Leave Match empty to add a header using 'Header-Name: value' in Replace.";
+                case REQUEST_HEADER ->
+                    "Header-name matching accepts both 'Authorization' and 'Authorization:'. Leave Match empty to add a header using 'Header-Name: value' in Replace.";
                 case REMOVE_PARAMETER_BY_NAME, REMOVE_PARAMETER_BY_VALUE,
                         REMOVE_COOKIE_BY_NAME, REMOVE_COOKIE_BY_VALUE,
-                        REMOVE_HEADER_BY_NAME, REMOVE_HEADER_BY_VALUE ->
+                        REMOVE_HEADER_BY_VALUE ->
                     "Removes items that match the pattern.";
+                case REMOVE_HEADER_BY_NAME ->
+                    "Header-name matching accepts both 'Authorization' and 'Authorization:' in Match.";
                 case MATCH_PARAM_NAME_REPLACE_VALUE -> "Matches parameter names and sets their value to Replace.";
                 case MATCH_COOKIE_NAME_REPLACE_VALUE -> "Matches cookie names and sets their value to Replace.";
-                case MATCH_HEADER_NAME_REPLACE_VALUE -> "Matches header names and sets their value to Replace.";
+                case MATCH_HEADER_NAME_REPLACE_VALUE ->
+                    "Matches header names and sets their value to Replace (accepts Authorization or Authorization: in Match).";
                 default -> "";
             });
 

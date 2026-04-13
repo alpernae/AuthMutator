@@ -30,7 +30,7 @@ public class Extension implements BurpExtension {
 
         api.logging().logToOutput("Auth Mutator Loaded Successfully!");
         api.logging().logToOutput("Author: ALPEREN ERGEL (@alpernae)");
-        api.logging().logToOutput("Version: 1.2");
+        api.logging().logToOutput("Version: 2026.3");
 
         api.extension().registerUnloadingHandler(() -> {
             api.logging().logToOutput("Auth Mutator Unload");

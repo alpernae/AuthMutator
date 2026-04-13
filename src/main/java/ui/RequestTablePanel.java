@@ -3,6 +3,7 @@ package ui;
 import burp.api.montoya.MontoyaApi;
 import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
+import burp.api.montoya.ui.editor.EditorOptions;
 import burp.api.montoya.ui.editor.HttpRequestEditor;
 import burp.api.montoya.ui.editor.HttpResponseEditor;
 import model.RequestLogEntry;
@@ -12,12 +13,21 @@ import javax.swing.*;
 import javax.swing.event.TableModelEvent;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.TableCellRenderer;
+import javax.swing.table.TableColumn;
+import javax.swing.table.TableColumnModel;
 import javax.swing.table.TableRowSorter;
 import javax.swing.text.BadLocationException;
 import javax.swing.text.Style;
 import javax.swing.text.StyleConstants;
 import javax.swing.text.StyledDocument;
 import java.awt.*;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.Enumeration;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.regex.Pattern;
 import static javax.swing.SwingUtilities.invokeLater;
 
 public class RequestTablePanel extends JPanel {
@@ -41,19 +51,29 @@ public class RequestTablePanel extends JPanel {
     private int responseUnauthTabIndex;
     private int responseDiffTabIndex;
     private JTextField userRoleFilterField;
+    private RowFilter<RequestLogModel, Integer> externalFilter;
+    private RowFilter<RequestLogModel, Integer> roleFilter;
+    private final List<TableColumn> allColumns;
+    private final Map<Integer, Boolean> columnVisibility;
+    private boolean applyingColumnVisibility;
+    private JButton columnFilterButton;
 
     public RequestTablePanel(MontoyaApi api, RequestLogModel requestLogModel) {
         this.api = api;
         this.requestLogModel = requestLogModel;
-        this.highlightRules = new java.util.ArrayList<>();
+        this.highlightRules = new ArrayList<>();
+        this.allColumns = new ArrayList<>();
+        this.columnVisibility = new LinkedHashMap<>();
 
         setLayout(new BorderLayout());
 
         // Create Filter Panel
         JPanel filterPanel = new JPanel(new BorderLayout());
-        JPanel leftFilter = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        filterPanel.setBorder(BorderFactory.createEmptyBorder(0, 4, 2, 4));
+        JPanel leftFilter = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
         leftFilter.add(new JLabel("Filter Role:"));
         userRoleFilterField = new JTextField(20);
+        userRoleFilterField.setToolTipText("Case-insensitive match on applied user role");
         userRoleFilterField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
             public void insertUpdate(javax.swing.event.DocumentEvent e) {
                 updateFilter();
@@ -67,8 +87,21 @@ public class RequestTablePanel extends JPanel {
                 updateFilter();
             }
         });
+        userRoleFilterField.addActionListener(e -> updateFilter());
         leftFilter.add(userRoleFilterField);
+
+        JButton clearRoleFilterButton = new JButton("Clear");
+        clearRoleFilterButton.setMargin(new Insets(1, 8, 1, 8));
+        clearRoleFilterButton.addActionListener(e -> userRoleFilterField.setText(""));
+        leftFilter.add(clearRoleFilterButton);
+
         filterPanel.add(leftFilter, BorderLayout.WEST);
+
+        JPanel rightFilter = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 2));
+        columnFilterButton = createColumnFilterButton();
+        rightFilter.add(columnFilterButton);
+        filterPanel.add(rightFilter, BorderLayout.EAST);
+
         add(filterPanel, BorderLayout.NORTH);
 
         // Create table with model
@@ -135,7 +168,7 @@ public class RequestTablePanel extends JPanel {
 
         requestLogModel.addTableModelListener(e -> {
             if (e.getFirstRow() == TableModelEvent.HEADER_ROW) {
-                invokeLater(this::refreshColumnLayout);
+                invokeLater(this::handleTableStructureChanged);
             }
         });
 
@@ -147,6 +180,9 @@ public class RequestTablePanel extends JPanel {
         // Split pane for table and message viewer
         JSplitPane mainSplitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, tableScrollPane, messageViewerPane);
         mainSplitPane.setDividerLocation(300);
+        mainSplitPane.setResizeWeight(0.45);
+        mainSplitPane.setContinuousLayout(true);
+        mainSplitPane.setOneTouchExpandable(true);
 
         add(mainSplitPane, BorderLayout.CENTER);
 
@@ -157,19 +193,19 @@ public class RequestTablePanel extends JPanel {
             }
         });
 
+        initializeColumnVisibilityState();
         refreshColumnLayout();
+        clearDisplayedMessages();
     }
 
     private JSplitPane createMessageViewer() {
-        // Create request editors
-        originalRequestEditor = api.userInterface().createHttpRequestEditor();
-        modifiedRequestEditor = api.userInterface().createHttpRequestEditor();
-        unauthRequestEditor = api.userInterface().createHttpRequestEditor();
-
-        // Create response editors
-        originalResponseEditor = api.userInterface().createHttpResponseEditor();
-        modifiedResponseEditor = api.userInterface().createHttpResponseEditor();
-        unauthResponseEditor = api.userInterface().createHttpResponseEditor();
+        // All viewers are intentionally read-only to prevent accidental edits in UI tabs.
+        originalRequestEditor = api.userInterface().createHttpRequestEditor(EditorOptions.READ_ONLY);
+        modifiedRequestEditor = api.userInterface().createHttpRequestEditor(EditorOptions.READ_ONLY);
+        unauthRequestEditor = api.userInterface().createHttpRequestEditor(EditorOptions.READ_ONLY);
+        originalResponseEditor = api.userInterface().createHttpResponseEditor(EditorOptions.READ_ONLY);
+        modifiedResponseEditor = api.userInterface().createHttpResponseEditor(EditorOptions.READ_ONLY);
+        unauthResponseEditor = api.userInterface().createHttpResponseEditor(EditorOptions.READ_ONLY);
 
         // Request tabbed pane
         requestTabbedPane = new JTabbedPane();
@@ -177,27 +213,30 @@ public class RequestTablePanel extends JPanel {
         JPanel originalReqPanel = new JPanel(new BorderLayout());
         originalReqPanel.add(originalRequestEditor.uiComponent(), BorderLayout.CENTER);
         requestTabbedPane.addTab("Original Request", originalReqPanel);
+        requestTabbedPane.setToolTipTextAt(0, "Read-only original request");
 
         JPanel modifiedReqPanel = new JPanel(new BorderLayout());
         modifiedReqPanel.add(modifiedRequestEditor.uiComponent(), BorderLayout.CENTER);
         requestTabbedPane.addTab("Modified Request", modifiedReqPanel);
+        requestTabbedPane.setToolTipTextAt(1, "Read-only request after rules/roles");
 
         JPanel unauthReqPanel = new JPanel(new BorderLayout());
         unauthReqPanel.add(unauthRequestEditor.uiComponent(), BorderLayout.CENTER);
         requestUnauthTabIndex = requestTabbedPane.getTabCount();
         requestTabbedPane.addTab("Unauth Request", unauthReqPanel);
         requestTabbedPane.setEnabledAt(requestUnauthTabIndex, false);
+        requestTabbedPane.setToolTipTextAt(requestUnauthTabIndex, "Read-only unauthenticated variant");
 
         requestDiffPane = createDiffPane();
         JScrollPane requestDiffScroll = new JScrollPane(requestDiffPane);
         requestDiffTabIndex = requestTabbedPane.getTabCount();
         requestTabbedPane.addTab("Diff", requestDiffScroll);
         requestTabbedPane.setEnabledAt(requestDiffTabIndex, false);
+        requestTabbedPane.setToolTipTextAt(requestDiffTabIndex, "Line-level differences");
 
         JPanel requestContainer = new JPanel(new BorderLayout());
         JLabel reqLabel = new JLabel("Request");
         reqLabel.setFont(reqLabel.getFont().deriveFont(Font.BOLD));
-        reqLabel.setForeground(PrimaryButton.PRIMARY_COLOR);
         reqLabel.setBorder(BorderFactory.createEmptyBorder(6, 8, 4, 8));
         requestContainer.add(reqLabel, BorderLayout.NORTH);
         requestContainer.add(requestTabbedPane, BorderLayout.CENTER);
@@ -208,27 +247,30 @@ public class RequestTablePanel extends JPanel {
         JPanel originalRespPanel = new JPanel(new BorderLayout());
         originalRespPanel.add(originalResponseEditor.uiComponent(), BorderLayout.CENTER);
         responseTabbedPane.addTab("Original Response", originalRespPanel);
+        responseTabbedPane.setToolTipTextAt(0, "Read-only original response");
 
         JPanel modifiedRespPanel = new JPanel(new BorderLayout());
         modifiedRespPanel.add(modifiedResponseEditor.uiComponent(), BorderLayout.CENTER);
         responseTabbedPane.addTab("Modified Response", modifiedRespPanel);
+        responseTabbedPane.setToolTipTextAt(1, "Read-only response to modified request");
 
         JPanel unauthRespPanel = new JPanel(new BorderLayout());
         unauthRespPanel.add(unauthResponseEditor.uiComponent(), BorderLayout.CENTER);
         responseUnauthTabIndex = responseTabbedPane.getTabCount();
         responseTabbedPane.addTab("Unauth Response", unauthRespPanel);
         responseTabbedPane.setEnabledAt(responseUnauthTabIndex, false);
+        responseTabbedPane.setToolTipTextAt(responseUnauthTabIndex, "Read-only unauthenticated response");
 
         responseDiffPane = createDiffPane();
         JScrollPane responseDiffScroll = new JScrollPane(responseDiffPane);
         responseDiffTabIndex = responseTabbedPane.getTabCount();
         responseTabbedPane.addTab("Diff", responseDiffScroll);
         responseTabbedPane.setEnabledAt(responseDiffTabIndex, false);
+        responseTabbedPane.setToolTipTextAt(responseDiffTabIndex, "Line-level differences");
 
         JPanel responseContainer = new JPanel(new BorderLayout());
         JLabel respLabel = new JLabel("Response");
         respLabel.setFont(respLabel.getFont().deriveFont(Font.BOLD));
-        respLabel.setForeground(PrimaryButton.PRIMARY_COLOR);
         respLabel.setBorder(BorderFactory.createEmptyBorder(6, 8, 4, 8));
         responseContainer.add(respLabel, BorderLayout.NORTH);
         responseContainer.add(responseTabbedPane, BorderLayout.CENTER);
@@ -236,177 +278,358 @@ public class RequestTablePanel extends JPanel {
         JSplitPane viewerSplitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, requestContainer, responseContainer);
         viewerSplitPane.setDividerLocation(500);
         viewerSplitPane.setResizeWeight(0.5);
+        viewerSplitPane.setContinuousLayout(true);
+        viewerSplitPane.setOneTouchExpandable(true);
 
         return viewerSplitPane;
     }
 
     public void refreshColumnLayout() {
         invokeLater(() -> {
-            int columnCount = requestTable.getColumnModel().getColumnCount();
+            TableColumnModel columnModel = requestTable.getColumnModel();
+            int columnCount = columnModel.getColumnCount();
             if (columnCount == 0) {
                 return;
             }
 
-            // ID, Role, Method, URL, Orig, Mod, Cookies, Params
-            int[] widths = { 50, 120, 80, 400, 60, 60, 80, 80 };
-            for (int i = 0; i < Math.min(widths.length, columnCount); i++) {
-                requestTable.getColumnModel().getColumn(i).setPreferredWidth(widths[i]);
-            }
+            Map<Integer, Integer> widthByModelColumn = Map.of(
+                    0, 50,
+                    1, 120,
+                    2, 80,
+                    3, 400,
+                    4, 90,
+                    5, 90,
+                    6, 100,
+                    7, 100,
+                    8, 70);
 
-            // Unauth Column (Index 8)
-            if (columnCount > 8) {
-                requestTable.getColumnModel().getColumn(8).setPreferredWidth(70);
-                DefaultTableCellRenderer centerRenderer = new DefaultTableCellRenderer();
-                centerRenderer.setHorizontalAlignment(SwingConstants.CENTER);
-                requestTable.getColumnModel().getColumn(8).setCellRenderer(centerRenderer);
-
-                // Set comparator for Unauth column
+            // Set comparator for optional Unauth column (model index 8)
+            if (requestLogModel.getColumnCount() > 8) {
                 sorter.setComparator(8, java.util.Comparator.comparing(o -> (Boolean) o));
             }
 
             DefaultTableCellRenderer leftRenderer = new DefaultTableCellRenderer();
             leftRenderer.setHorizontalAlignment(SwingConstants.LEFT);
-            // ID(0), Role(1), Method(2), URL(3), Orig(4), Mod(5) are left aligned usually
-            for (int columnIndex : new int[] { 0, 1, 2, 3, 4, 5 }) {
-                if (columnIndex < columnCount) {
-                    requestTable.getColumnModel().getColumn(columnIndex).setCellRenderer(leftRenderer);
-                }
+
+            DefaultTableCellRenderer centerRenderer = new DefaultTableCellRenderer();
+            centerRenderer.setHorizontalAlignment(SwingConstants.CENTER);
+
+            for (int viewIndex = 0; viewIndex < columnCount; viewIndex++) {
+                TableColumn column = columnModel.getColumn(viewIndex);
+                int modelIndex = column.getModelIndex();
+                column.setPreferredWidth(widthByModelColumn.getOrDefault(modelIndex, 100));
+                column.setCellRenderer(modelIndex == 8 ? centerRenderer : leftRenderer);
             }
         });
     }
 
     private void displaySelectedRequest() {
         int selectedRow = requestTable.getSelectedRow();
-        if (selectedRow >= 0) {
-            int modelRow = requestTable.convertRowIndexToModel(selectedRow);
-            RequestLogEntry entry = requestLogModel.getEntry(modelRow);
+        if (selectedRow < 0) {
+            clearDisplayedMessages();
+            return;
+        }
 
-            if (entry != null) {
+        int modelRow = requestTable.convertRowIndexToModel(selectedRow);
+        RequestLogEntry entry = requestLogModel.getEntry(modelRow);
+
+        if (entry == null) {
+            clearDisplayedMessages();
+            return;
+        }
+
+        int requestTabBefore = requestTabbedPane.getSelectedIndex();
+        int responseTabBefore = responseTabbedPane.getSelectedIndex();
+
+        HttpRequest originalRequest = entry.getOriginalRequest();
+        HttpRequest modifiedRequest = entry.getModifiedRequest();
+        HttpRequest unauthRequest = entry.getUnauthRequest();
+
+        originalRequestEditor.setRequest(originalRequest);
+
+        if (modifiedRequest != null) {
+            modifiedRequestEditor.setRequest(modifiedRequest);
+            requestTabbedPane.setEnabledAt(1, true);
+            DiffResult requestDiff = buildDiff(originalRequest, modifiedRequest);
+            renderDiff(requestDiffPane, requestDiff);
+            requestTabbedPane.setEnabledAt(requestDiffTabIndex, requestDiff.hasChanges());
+            if (!requestDiff.hasChanges() && requestTabbedPane.getSelectedIndex() == requestDiffTabIndex) {
                 requestTabbedPane.setSelectedIndex(0);
+            }
+        } else {
+            modifiedRequestEditor.setRequest(originalRequest);
+            requestTabbedPane.setEnabledAt(1, false);
+            renderDiff(requestDiffPane, DiffResult.info("No modified request available."));
+            requestTabbedPane.setEnabledAt(requestDiffTabIndex, false);
+            if (requestTabbedPane.getSelectedIndex() == requestDiffTabIndex) {
+                requestTabbedPane.setSelectedIndex(0);
+            }
+        }
+
+        if (unauthRequest != null) {
+            unauthRequestEditor.setRequest(unauthRequest);
+            requestTabbedPane.setEnabledAt(requestUnauthTabIndex, true);
+        } else {
+            unauthRequestEditor.setRequest(originalRequest);
+            requestTabbedPane.setEnabledAt(requestUnauthTabIndex, false);
+            if (requestTabbedPane.getSelectedIndex() == requestUnauthTabIndex) {
+                requestTabbedPane.setSelectedIndex(0);
+            }
+        }
+
+        HttpResponse originalResponse = entry.getOriginalResponse();
+        HttpResponse modifiedResponse = entry.getModifiedResponse();
+        HttpResponse unauthResponse = entry.getUnauthResponse();
+
+        // Debug logging
+        api.logging().logToOutput("UI Display - Entry ID: " + entry.getId() +
+                ", wasModifiedSent: " + entry.wasModifiedRequestSent() +
+                ", originalResponse: "
+                + (originalResponse != null ? "present (" + originalResponse.statusCode() + ")" : "null") +
+                ", modifiedResponse: "
+                + (modifiedResponse != null ? "present (" + modifiedResponse.statusCode() + ")" : "null") +
+                ", getResponse: "
+                + (entry.getResponse() != null ? "present (" + entry.getResponse().statusCode() + ")"
+                        : "null"));
+
+        // If the modified request was sent, show its response in the original tab
+        // because we don't have the "true" original response (we never sent the
+        // original request)
+        if (originalResponse != null) {
+            originalResponseEditor.setResponse(originalResponse);
+        } else if (entry.wasModifiedRequestSent() && modifiedResponse != null) {
+            // Show modified response in original tab when modified request was actually
+            // sent
+            originalResponseEditor.setResponse(modifiedResponse);
+        } else if (entry.getResponse() != null) {
+            originalResponseEditor.setResponse(entry.getResponse());
+        } else {
+            originalResponseEditor.setResponse(null);
+        }
+
+        if (modifiedResponse != null) {
+            api.logging().logToOutput(
+                    "  Setting modified response editor (case 1): status=" + modifiedResponse.statusCode());
+            modifiedResponseEditor.setResponse(modifiedResponse);
+            responseTabbedPane.setEnabledAt(1, true);
+        } else if (entry.wasModifiedRequestSent() && entry.getResponse() != null) {
+            // If modified request was sent but modifiedResponse is somehow null,
+            // the response we have IS the modified response
+            api.logging().logToOutput(
+                    "  Setting modified response editor (case 2): status=" + entry.getResponse().statusCode());
+            modifiedResponseEditor.setResponse(entry.getResponse());
+            responseTabbedPane.setEnabledAt(1, true);
+        } else {
+            api.logging().logToOutput("  Modified response tab disabled or cleared");
+            if (entry.getResponse() != null) {
+                modifiedResponseEditor.setResponse(entry.getResponse());
+            } else {
+                // Clear the editor to show it's empty
+                modifiedResponseEditor.setResponse(null);
+            }
+            responseTabbedPane.setEnabledAt(1, false);
+        }
+
+        if (originalResponse != null && modifiedResponse != null) {
+            DiffResult responseDiff = buildDiff(originalResponse, modifiedResponse);
+            renderDiff(responseDiffPane, responseDiff);
+            responseTabbedPane.setEnabledAt(responseDiffTabIndex, responseDiff.hasChanges());
+            if (!responseDiff.hasChanges() && responseTabbedPane.getSelectedIndex() == responseDiffTabIndex) {
                 responseTabbedPane.setSelectedIndex(0);
+            }
+        } else if (entry.wasModifiedRequestSent() && modifiedResponse != null) {
+            renderDiff(responseDiffPane,
+                    DiffResult.info("Original response is unavailable because modified request was sent."));
+            responseTabbedPane.setEnabledAt(responseDiffTabIndex, false);
+            if (responseTabbedPane.getSelectedIndex() == responseDiffTabIndex) {
+                responseTabbedPane.setSelectedIndex(0);
+            }
+        } else if (modifiedResponse == null) {
+            renderDiff(responseDiffPane, DiffResult.info("No modified response available."));
+            responseTabbedPane.setEnabledAt(responseDiffTabIndex, false);
+            if (responseTabbedPane.getSelectedIndex() == responseDiffTabIndex) {
+                responseTabbedPane.setSelectedIndex(0);
+            }
+        } else {
+            renderDiff(responseDiffPane, DiffResult.info("No diff available."));
+            responseTabbedPane.setEnabledAt(responseDiffTabIndex, false);
+            if (responseTabbedPane.getSelectedIndex() == responseDiffTabIndex) {
+                responseTabbedPane.setSelectedIndex(0);
+            }
+        }
 
-                HttpRequest originalRequest = entry.getOriginalRequest();
-                HttpRequest modifiedRequest = entry.getModifiedRequest();
-                HttpRequest unauthRequest = entry.getUnauthRequest();
+        if (unauthResponse != null) {
+            unauthResponseEditor.setResponse(unauthResponse);
+            responseTabbedPane.setEnabledAt(responseUnauthTabIndex, true);
+        } else {
+            unauthResponseEditor.setResponse(null);
+            responseTabbedPane.setEnabledAt(responseUnauthTabIndex, false);
+            if (responseTabbedPane.getSelectedIndex() == responseUnauthTabIndex) {
+                responseTabbedPane.setSelectedIndex(0);
+            }
+        }
 
-                originalRequestEditor.setRequest(originalRequest);
+        restoreTabSelection(requestTabbedPane, requestTabBefore);
+        restoreTabSelection(responseTabbedPane, responseTabBefore);
+    }
 
-                if (modifiedRequest != null) {
-                    modifiedRequestEditor.setRequest(modifiedRequest);
-                    requestTabbedPane.setEnabledAt(1, true);
-                    DiffResult requestDiff = buildDiff(originalRequest, modifiedRequest);
-                    renderDiff(requestDiffPane, requestDiff);
-                    requestTabbedPane.setEnabledAt(requestDiffTabIndex, requestDiff.hasChanges());
-                    if (!requestDiff.hasChanges() && requestTabbedPane.getSelectedIndex() == requestDiffTabIndex) {
-                        requestTabbedPane.setSelectedIndex(0);
-                    }
-                } else {
-                    modifiedRequestEditor.setRequest(originalRequest);
-                    requestTabbedPane.setEnabledAt(1, false);
-                    renderDiff(requestDiffPane, DiffResult.info("No modified request available."));
-                    requestTabbedPane.setEnabledAt(requestDiffTabIndex, false);
-                    if (requestTabbedPane.getSelectedIndex() == requestDiffTabIndex) {
-                        requestTabbedPane.setSelectedIndex(0);
-                    }
-                }
+    private void clearDisplayedMessages() {
+        originalRequestEditor.setRequest(null);
+        modifiedRequestEditor.setRequest(null);
+        unauthRequestEditor.setRequest(null);
+        originalResponseEditor.setResponse(null);
+        modifiedResponseEditor.setResponse(null);
+        unauthResponseEditor.setResponse(null);
 
-                if (unauthRequest != null) {
-                    unauthRequestEditor.setRequest(unauthRequest);
-                    requestTabbedPane.setEnabledAt(requestUnauthTabIndex, true);
-                } else {
-                    unauthRequestEditor.setRequest(originalRequest);
-                    requestTabbedPane.setEnabledAt(requestUnauthTabIndex, false);
-                    if (requestTabbedPane.getSelectedIndex() == requestUnauthTabIndex) {
-                        requestTabbedPane.setSelectedIndex(0);
-                    }
-                }
+        requestTabbedPane.setEnabledAt(1, false);
+        requestTabbedPane.setEnabledAt(requestUnauthTabIndex, false);
+        requestTabbedPane.setEnabledAt(requestDiffTabIndex, false);
+        responseTabbedPane.setEnabledAt(1, false);
+        responseTabbedPane.setEnabledAt(responseUnauthTabIndex, false);
+        responseTabbedPane.setEnabledAt(responseDiffTabIndex, false);
 
-                HttpResponse originalResponse = entry.getOriginalResponse();
-                HttpResponse modifiedResponse = entry.getModifiedResponse();
-                HttpResponse unauthResponse = entry.getUnauthResponse();
+        renderDiff(requestDiffPane, DiffResult.info("Select a request to inspect."));
+        renderDiff(responseDiffPane, DiffResult.info("Select a request to inspect."));
 
-                // Debug logging
-                api.logging().logToOutput("UI Display - Entry ID: " + entry.getId() +
-                        ", wasModifiedSent: " + entry.wasModifiedRequestSent() +
-                        ", originalResponse: "
-                        + (originalResponse != null ? "present (" + originalResponse.statusCode() + ")" : "null") +
-                        ", modifiedResponse: "
-                        + (modifiedResponse != null ? "present (" + modifiedResponse.statusCode() + ")" : "null") +
-                        ", getResponse: "
-                        + (entry.getResponse() != null ? "present (" + entry.getResponse().statusCode() + ")"
-                                : "null"));
+        requestTabbedPane.setSelectedIndex(0);
+        responseTabbedPane.setSelectedIndex(0);
+    }
 
-                // If the modified request was sent, show its response in the original tab
-                // because we don't have the "true" original response (we never sent the
-                // original request)
-                if (originalResponse != null) {
-                    originalResponseEditor.setResponse(originalResponse);
-                } else if (entry.wasModifiedRequestSent() && modifiedResponse != null) {
-                    // Show modified response in original tab when modified request was actually
-                    // sent
-                    originalResponseEditor.setResponse(modifiedResponse);
-                } else if (entry.getResponse() != null) {
-                    originalResponseEditor.setResponse(entry.getResponse());
-                }
+    private void restoreTabSelection(JTabbedPane tabbedPane, int preferredIndex) {
+        if (preferredIndex >= 0
+                && preferredIndex < tabbedPane.getTabCount()
+                && tabbedPane.isEnabledAt(preferredIndex)) {
+            tabbedPane.setSelectedIndex(preferredIndex);
+            return;
+        }
 
-                if (modifiedResponse != null) {
-                    api.logging().logToOutput(
-                            "  Setting modified response editor (case 1): status=" + modifiedResponse.statusCode());
-                    modifiedResponseEditor.setResponse(modifiedResponse);
-                    responseTabbedPane.setEnabledAt(1, true);
-                } else if (entry.wasModifiedRequestSent() && entry.getResponse() != null) {
-                    // If modified request was sent but modifiedResponse is somehow null,
-                    // the response we have IS the modified response
-                    api.logging().logToOutput(
-                            "  Setting modified response editor (case 2): status=" + entry.getResponse().statusCode());
-                    modifiedResponseEditor.setResponse(entry.getResponse());
-                    responseTabbedPane.setEnabledAt(1, true);
-                } else {
-                    api.logging().logToOutput("  Modified response tab disabled or cleared");
-                    if (entry.getResponse() != null) {
-                        modifiedResponseEditor.setResponse(entry.getResponse());
-                    } else {
-                        // Clear the editor to show it's empty
-                        modifiedResponseEditor.setResponse(null);
-                    }
-                    responseTabbedPane.setEnabledAt(1, false);
-                }
-
-                if (originalResponse != null && modifiedResponse != null) {
-                    DiffResult responseDiff = buildDiff(originalResponse, modifiedResponse);
-                    renderDiff(responseDiffPane, responseDiff);
-                    responseTabbedPane.setEnabledAt(responseDiffTabIndex, responseDiff.hasChanges());
-                    if (!responseDiff.hasChanges() && responseTabbedPane.getSelectedIndex() == responseDiffTabIndex) {
-                        responseTabbedPane.setSelectedIndex(0);
-                    }
-                } else {
-                    renderDiff(responseDiffPane, DiffResult.info("No diff available."));
-                    responseTabbedPane.setEnabledAt(responseDiffTabIndex, false);
-                    if (responseTabbedPane.getSelectedIndex() == responseDiffTabIndex) {
-                        responseTabbedPane.setSelectedIndex(0);
-                    }
-                }
-
-                if (unauthResponse != null) {
-                    unauthResponseEditor.setResponse(unauthResponse);
-                    responseTabbedPane.setEnabledAt(responseUnauthTabIndex, true);
-                } else {
-                    unauthResponseEditor.setResponse(null);
-                    responseTabbedPane.setEnabledAt(responseUnauthTabIndex, false);
-                    if (responseTabbedPane.getSelectedIndex() == responseUnauthTabIndex) {
-                        responseTabbedPane.setSelectedIndex(0);
-                    }
-                }
+        for (int i = 0; i < tabbedPane.getTabCount(); i++) {
+            if (tabbedPane.isEnabledAt(i)) {
+                tabbedPane.setSelectedIndex(i);
+                return;
             }
         }
     }
 
+    private JButton createColumnFilterButton() {
+        JButton button = new JButton("Columns", new FilterMenuIcon(12, 12));
+        button.setToolTipText("Show or hide request log columns");
+        button.setMargin(new Insets(1, 8, 1, 8));
+        button.setFocusPainted(false);
+        button.addActionListener(e -> showColumnFilterMenu(button));
+        return button;
+    }
+
+    private void showColumnFilterMenu(Component invoker) {
+        if (allColumns.isEmpty()) {
+            initializeColumnVisibilityState();
+        }
+
+        JPopupMenu menu = new JPopupMenu();
+        JMenuItem header = new JMenuItem("Included columns");
+        header.setEnabled(false);
+        menu.add(header);
+        menu.addSeparator();
+
+        for (TableColumn column : allColumns) {
+            int modelIndex = column.getModelIndex();
+            String columnName = requestLogModel.getColumnName(modelIndex);
+            JCheckBoxMenuItem item = new JCheckBoxMenuItem(columnName, isColumnVisible(modelIndex));
+            item.addActionListener(e -> {
+                boolean requestedVisible = item.isSelected();
+                if (!requestedVisible && countVisibleColumns() <= 1) {
+                    item.setSelected(true);
+                    return;
+                }
+                columnVisibility.put(modelIndex, requestedVisible);
+                applyColumnVisibility();
+            });
+            menu.add(item);
+        }
+
+        menu.show(invoker, 0, invoker.getHeight());
+    }
+
+    private void handleTableStructureChanged() {
+        initializeColumnVisibilityState();
+        refreshColumnLayout();
+    }
+
+    private void initializeColumnVisibilityState() {
+        Map<Integer, Boolean> previous = new LinkedHashMap<>(columnVisibility);
+        allColumns.clear();
+
+        TableColumnModel columnModel = requestTable.getColumnModel();
+        Enumeration<TableColumn> columns = columnModel.getColumns();
+        while (columns.hasMoreElements()) {
+            TableColumn column = columns.nextElement();
+            allColumns.add(column);
+        }
+
+        allColumns.sort(Comparator.comparingInt(TableColumn::getModelIndex));
+
+        for (TableColumn column : allColumns) {
+            int modelIndex = column.getModelIndex();
+            columnVisibility.put(modelIndex, previous.getOrDefault(modelIndex, true));
+        }
+
+        ensureAtLeastOneVisibleColumn();
+        applyColumnVisibility();
+    }
+
+    private boolean isColumnVisible(int modelIndex) {
+        return columnVisibility.getOrDefault(modelIndex, true);
+    }
+
+    private int countVisibleColumns() {
+        int count = 0;
+        for (TableColumn column : allColumns) {
+            if (isColumnVisible(column.getModelIndex())) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private void ensureAtLeastOneVisibleColumn() {
+        if (!allColumns.isEmpty() && countVisibleColumns() == 0) {
+            columnVisibility.put(allColumns.get(0).getModelIndex(), true);
+        }
+    }
+
+    private void applyColumnVisibility() {
+        if (applyingColumnVisibility) {
+            return;
+        }
+        applyingColumnVisibility = true;
+        try {
+            ensureAtLeastOneVisibleColumn();
+            TableColumnModel columnModel = requestTable.getColumnModel();
+
+            while (columnModel.getColumnCount() > 0) {
+                columnModel.removeColumn(columnModel.getColumn(0));
+            }
+
+            for (TableColumn column : allColumns) {
+                if (isColumnVisible(column.getModelIndex())) {
+                    columnModel.addColumn(column);
+                }
+            }
+        } finally {
+            applyingColumnVisibility = false;
+        }
+
+        refreshColumnLayout();
+    }
+
     public void applyFilter(RowFilter<RequestLogModel, Integer> filter) {
-        sorter.setRowFilter(filter);
+        this.externalFilter = filter;
+        applyCombinedFilters();
     }
 
     public void clearFilter() {
-        sorter.setRowFilter(null);
+        this.externalFilter = null;
+        applyCombinedFilters();
     }
 
     public void setHighlightRules(java.util.List<model.HighlightRule> rules) {
@@ -652,21 +875,84 @@ public class RequestTablePanel extends JPanel {
         }
     }
 
+    private static class FilterMenuIcon implements Icon {
+        private final int width;
+        private final int height;
+
+        FilterMenuIcon(int width, int height) {
+            this.width = width;
+            this.height = height;
+        }
+
+        @Override
+        public void paintIcon(Component c, Graphics g, int x, int y) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+
+            Color color = UIManager.getColor("Label.foreground");
+            if (color == null) {
+                color = Color.DARK_GRAY;
+            }
+            g2.setColor(color);
+
+            int left = x + 1;
+            int right = x + width - 1;
+            int top = y + 1;
+            int middleY = y + (height / 2);
+            int bottom = y + height - 1;
+            int mid = x + (width / 2);
+            int stem = Math.max(1, width / 6);
+
+            Polygon funnel = new Polygon();
+            funnel.addPoint(left, top);
+            funnel.addPoint(right, top);
+            funnel.addPoint(mid + stem, middleY);
+            funnel.addPoint(mid + stem, bottom);
+            funnel.addPoint(mid - stem, bottom);
+            funnel.addPoint(mid - stem, middleY);
+
+            g2.drawPolygon(funnel);
+            g2.dispose();
+        }
+
+        @Override
+        public int getIconWidth() {
+            return width;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return height;
+        }
+    }
+
     private static final Color DIFF_ADDED_COLOR = new Color(0x1E88E5);
     private static final Color DIFF_REMOVED_COLOR = new Color(0xE53935);
 
     private void updateFilter() {
         String text = userRoleFilterField.getText();
         if (text == null || text.trim().isEmpty()) {
-            sorter.setRowFilter(null);
+            roleFilter = null;
         } else {
             // Filter by "User Role" column (index 1)
-            try {
-                sorter.setRowFilter(RowFilter.regexFilter("(?i)" + text.trim(), 1));
-            } catch (java.util.regex.PatternSyntaxException e) {
-                // Invalid regex, maybe fallback to literal contains?
-                // For now, ignore
-            }
+            String escaped = Pattern.quote(text.trim());
+            roleFilter = RowFilter.regexFilter("(?i).*" + escaped + ".*", 1);
         }
+        applyCombinedFilters();
+    }
+
+    private void applyCombinedFilters() {
+        if (externalFilter == null && roleFilter == null) {
+            sorter.setRowFilter(null);
+            return;
+        }
+        if (externalFilter != null && roleFilter != null) {
+            List<RowFilter<RequestLogModel, Integer>> filters = new ArrayList<>();
+            filters.add(externalFilter);
+            filters.add(roleFilter);
+            sorter.setRowFilter(RowFilter.andFilter(filters));
+            return;
+        }
+        sorter.setRowFilter(externalFilter != null ? externalFilter : roleFilter);
     }
 }

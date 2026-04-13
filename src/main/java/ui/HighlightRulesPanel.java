@@ -8,6 +8,8 @@ import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.TableCellRenderer;
 import java.awt.*;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.util.List;
 import java.util.function.Consumer;
 import java.util.ArrayList;
@@ -19,6 +21,9 @@ public class HighlightRulesPanel extends JPanel {
     private final JTable rulesTable;
     private final Consumer<List<HighlightRule>> onRulesChanged;
     private final java.util.function.Supplier<List<String>> rolesSupplier;
+    private JButton editButton;
+    private JButton deleteButton;
+    private JButton toggleButton;
 
     public HighlightRulesPanel(MontoyaApi api,
             List<HighlightRule> initialRules,
@@ -48,6 +53,16 @@ public class HighlightRulesPanel extends JPanel {
             }
         };
         rulesTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        rulesTable.setAutoCreateRowSorter(true);
+        rulesTable.getSelectionModel().addListSelectionListener(e -> updateActionButtons());
+        rulesTable.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                if (e.getClickCount() == 2 && SwingUtilities.isLeftMouseButton(e)) {
+                    editSelectedRule();
+                }
+            }
+        });
         rulesTable.getColumnModel().getColumn(3).setCellRenderer(new HighlightColorRenderer());
         JScrollPane scrollPane = new JScrollPane(rulesTable);
 
@@ -64,19 +79,21 @@ public class HighlightRulesPanel extends JPanel {
         JButton addButton = new PrimaryButton("Add Highlight Rule");
         addButton.addActionListener(e -> showAddRuleDialog());
 
-        JButton editButton = new PrimaryButton("Edit");
+        editButton = new PrimaryButton("Edit");
         editButton.addActionListener(e -> editSelectedRule());
 
-        JButton deleteButton = new PrimaryButton("Delete");
+        deleteButton = new PrimaryButton("Delete");
         deleteButton.addActionListener(e -> deleteSelectedRule());
 
-        JButton enableButton = new PrimaryButton("Enable/Disable");
-        enableButton.addActionListener(e -> toggleSelectedRule());
+        toggleButton = new PrimaryButton("Enable/Disable");
+        toggleButton.addActionListener(e -> toggleSelectedRule());
 
         panel.add(addButton);
         panel.add(editButton);
         panel.add(deleteButton);
-        panel.add(enableButton);
+        panel.add(toggleButton);
+
+        updateActionButtons();
 
         return panel;
     }
@@ -90,13 +107,20 @@ public class HighlightRulesPanel extends JPanel {
         if (newRule != null) {
             rules.add(newRule);
             tableModel.fireTableRowsInserted(rules.size() - 1, rules.size() - 1);
+            int modelRow = rules.size() - 1;
+            int viewRow = rulesTable.convertRowIndexToView(modelRow);
+            if (viewRow >= 0) {
+                rulesTable.setRowSelectionInterval(viewRow, viewRow);
+                rulesTable.scrollRectToVisible(rulesTable.getCellRect(viewRow, 0, true));
+            }
             notifyRulesChanged();
             api.logging().logToOutput("Added highlight rule: " + newRule.getName());
+            updateActionButtons();
         }
     }
 
     private void editSelectedRule() {
-        int selectedRow = rulesTable.getSelectedRow();
+        int selectedRow = getSelectedModelRow();
         if (selectedRow >= 0) {
             HighlightRule rule = rules.get(selectedRow);
             HighlightRuleDialog dialog = new HighlightRuleDialog((Frame) SwingUtilities.getWindowAncestor(this), rule,
@@ -112,18 +136,27 @@ public class HighlightRulesPanel extends JPanel {
     }
 
     private void deleteSelectedRule() {
-        int selectedRow = rulesTable.getSelectedRow();
+        int selectedRow = getSelectedModelRow();
         if (selectedRow >= 0) {
             HighlightRule rule = rules.get(selectedRow);
             rules.remove(selectedRow);
             tableModel.fireTableRowsDeleted(selectedRow, selectedRow);
             notifyRulesChanged();
             api.logging().logToOutput("Deleted highlight rule: " + rule.getName());
+
+            if (tableModel.getRowCount() > 0) {
+                int modelRowToSelect = Math.min(selectedRow, tableModel.getRowCount() - 1);
+                int viewRowToSelect = rulesTable.convertRowIndexToView(modelRowToSelect);
+                if (viewRowToSelect >= 0) {
+                    rulesTable.setRowSelectionInterval(viewRowToSelect, viewRowToSelect);
+                }
+            }
+            updateActionButtons();
         }
     }
 
     private void toggleSelectedRule() {
-        int selectedRow = rulesTable.getSelectedRow();
+        int selectedRow = getSelectedModelRow();
         if (selectedRow >= 0) {
             HighlightRule rule = rules.get(selectedRow);
             rule.setEnabled(!rule.isEnabled());
@@ -133,15 +166,39 @@ public class HighlightRulesPanel extends JPanel {
         }
     }
 
+    private int getSelectedModelRow() {
+        int viewRow = rulesTable.getSelectedRow();
+        if (viewRow < 0) {
+            return -1;
+        }
+        return rulesTable.convertRowIndexToModel(viewRow);
+    }
+
+    private void updateActionButtons() {
+        boolean hasSelection = getSelectedModelRow() >= 0;
+        if (editButton != null) {
+            editButton.setEnabled(hasSelection);
+        }
+        if (deleteButton != null) {
+            deleteButton.setEnabled(hasSelection);
+        }
+        if (toggleButton != null) {
+            toggleButton.setEnabled(hasSelection);
+        }
+    }
+
     public List<HighlightRule> getRules() {
         return new ArrayList<>(rules);
     }
 
     public void setRules(List<HighlightRule> newRules) {
         rules.clear();
-        rules.addAll(newRules);
+        if (newRules != null) {
+            rules.addAll(newRules);
+        }
         tableModel.fireTableDataChanged();
         notifyRulesChanged();
+        updateActionButtons();
     }
 
     private void notifyRulesChanged() {

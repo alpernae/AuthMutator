@@ -45,7 +45,6 @@ public class MainPanel extends JPanel {
         initializeUI(initialState);
         requestLogModel.setShowUnauthColumn(config.isUnauthenticatedTesting());
         requestTablePanel.refreshColumnLayout();
-        requestTablePanel.refreshColumnLayout();
         requestHandler.setReplaceRules(initialState.getReplaceRules());
         requestHandler.setUserRoles(initialState.getUserRoles());
         requestTablePanel.setHighlightRules(initialState.getHighlightRules());
@@ -66,7 +65,7 @@ public class MainPanel extends JPanel {
         // Quick controls + Filter panel on top
         JPanel controls = new JPanel(new BorderLayout());
         quickControlsPanel = new QuickControlsPanel(config, this::handleConfigChanged, this::importStateFromChooser,
-                this::exportStateFromChooser);
+                this::exportStateFromChooser, requestLogModel::clearEntries);
         controls.add(quickControlsPanel, BorderLayout.NORTH);
         filterPanel = new FilterPanel(requestLogModel, requestTablePanel);
         controls.add(filterPanel, BorderLayout.SOUTH);

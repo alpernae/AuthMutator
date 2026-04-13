@@ -67,6 +67,40 @@ goto fail
 :execute
 @rem Setup the command line
 
+for /f "tokens=3" %%v in ('"%JAVA_EXE%" -version 2^>^&1') do (
+	set JAVA_VERSION=%%~v
+	goto versionDetected
+)
+
+:versionDetected
+set JAVA_VERSION=%JAVA_VERSION:"=%
+
+for /f "tokens=1,2 delims=." %%a in ("%JAVA_VERSION%") do (
+	set JAVA_MAJOR=%%a
+	set JAVA_MINOR=%%b
+)
+
+if "%JAVA_MAJOR%" == "1" set JAVA_MAJOR=%JAVA_MINOR%
+
+if not defined JAVA_MAJOR (
+	echo.
+	echo ERROR: Unable to determine Java version from: %JAVA_EXE%
+	goto fail
+)
+
+if %JAVA_MAJOR% LSS 17 (
+	echo.
+	echo ERROR: Auth Mutator requires Java 17 or newer to run Gradle.
+	echo.
+	echo Current Java version: %JAVA_VERSION%
+	echo Detected Java binary: %JAVA_EXE%
+	echo.
+	echo Install a JDK 17+ and set JAVA_HOME to that JDK path.
+	echo Example: setx JAVA_HOME "C:\Program Files\Eclipse Adoptium\jdk-17*"
+	echo Then reopen the terminal and run gradlew.bat build again.
+	goto fail
+)
+
 set CLASSPATH=%APP_HOME%\gradle\wrapper\gradle-wrapper.jar
 
 

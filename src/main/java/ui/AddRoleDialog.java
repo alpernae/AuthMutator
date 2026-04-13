@@ -58,7 +58,7 @@ public class AddRoleDialog extends JDialog {
         gbc.gridy = 3; // Adjusted gridy
         gbc.gridwidth = 2;
         gbc.weighty = 0;
-        JLabel helpLabel = new JLabel("Define cookies and headers to inject:");
+        JLabel helpLabel = new JLabel("Define cookies and headers to inject (header names accept Authorization or Authorization:):");
         helpLabel.setFont(helpLabel.getFont().deriveFont(Font.BOLD));
         panel.add(helpLabel, gbc);
 
@@ -103,9 +103,9 @@ public class AddRoleDialog extends JDialog {
         addHeaderBtn.addActionListener(e -> tokenTableModel.addRow(new Object[] { AuthToken.Type.HEADER, "", "" }));
 
         JButton addCookieBtn = new PrimaryButton("Add Cookie");
-        addCookieBtn.setToolTipText("Add a 'Cookie' header.");
+        addCookieBtn.setToolTipText("Add a cookie parameter token.");
         addCookieBtn
-                .addActionListener(e -> tokenTableModel.addRow(new Object[] { AuthToken.Type.HEADER, "Cookie", "" }));
+            .addActionListener(e -> tokenTableModel.addRow(new Object[] { AuthToken.Type.COOKIE, "", "" }));
 
         JButton removeBtn = new PrimaryButton("Remove");
         removeBtn.addActionListener(e -> {
@@ -135,7 +135,16 @@ public class AddRoleDialog extends JDialog {
             String value = (String) tokenTableModel.getValueAt(i, 2);
 
             if (tokenName != null && !tokenName.trim().isEmpty()) {
-                tokens.add(new AuthToken(type, tokenName.trim(), value != null ? value : ""));
+                String normalizedName = tokenName.trim();
+                if (type == AuthToken.Type.HEADER) {
+                    int colonIndex = normalizedName.indexOf(':');
+                    if (colonIndex >= 0) {
+                        normalizedName = normalizedName.substring(0, colonIndex).trim();
+                    }
+                }
+                if (!normalizedName.isEmpty()) {
+                    tokens.add(new AuthToken(type, normalizedName, value != null ? value : ""));
+                }
             }
         }
         if (tokens.isEmpty()) {

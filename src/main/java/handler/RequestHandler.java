@@ -17,7 +17,9 @@ import model.AuthToken;
 import model.HighlightRule;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -155,18 +157,18 @@ public class RequestHandler implements HttpHandler {
         boolean shouldComputeRules = shouldApplyRulesForMain || shouldApplyRulesForUnauth || proxyPreview;
 
         HttpRequest modifiedRequest = null;
-        List<String> appliedRolesList = new java.util.ArrayList<>();
+        Set<String> appliedRoles = new LinkedHashSet<>();
         if (shouldComputeRules) {
             HttpRequest candidate = requestToBeSent;
 
             // Apply User Roles first
-            HttpRequest afterRoles = applyUserRoles(candidate);
+            HttpRequest afterRoles = applyUserRoles(candidate, appliedRoles);
             if (afterRoles != null) {
                 candidate = afterRoles;
             }
 
             // Apply Replace Rules
-            HttpRequest afterRules = applyReplaceRules(candidate, appliedRolesList);
+            HttpRequest afterRules = applyReplaceRules(candidate, appliedRoles);
             if (afterRules != null) {
                 candidate = afterRules;
             }
@@ -199,7 +201,7 @@ public class RequestHandler implements HttpHandler {
                 unauthTestingEnabled,
                 proxyPreview,
                 modifiedRequestSent,
-                String.join(", ", appliedRolesList));
+                String.join(", ", appliedRoles));
 
         boolean shouldTrack = transformsAllowed
                 && (pending.hasModifiedChange() || pending.hasUnauthVariant() || proxyPreview);
@@ -482,7 +484,7 @@ public class RequestHandler implements HttpHandler {
         return changed ? current : request;
     }
 
-    private HttpRequest applyUserRoles(HttpRequest request) {
+    private HttpRequest applyUserRoles(HttpRequest request, Set<String> appliedRolesCollector) {
         HttpRequest current = request;
         boolean modified = false;
 
@@ -493,36 +495,19 @@ public class RequestHandler implements HttpHandler {
 
             api.logging().logToOutput("  Applying Role: " + role.getName());
 
-            for (AuthToken token : role.getTokens()) {
-                if (token.getType() == AuthToken.Type.HEADER) {
-                    current = current.withUpdatedHeader(token.getName(), token.getValue());
-                    // If header didn't exist, withUpdatedHeader might not add it?
-                    // Verify Montoya API behavior: "Updates the value of the header with the
-                    // specified name. If the header does not exist, it is added."
-                    // Actually, let's check standard behavior. usually updated -> replaces. added
-                    // -> adds.
-                    // If it doesn't exist, updated usually adds. But let's be safe.
-                    // Montoya API: HttpRequest.withUpdatedHeader(name, value) "Returns a new
-                    // HttpRequest with the header with the specified name updated to the specified
-                    // value. If the header is not present, it is added."
-                    // Perfect.
-                    modified = true;
-                } else if (token.getType() == AuthToken.Type.COOKIE) {
-                    // Start by removing existing cookie with same name to ensure clean state?
-                    // Or just use withUpdatedParameters if it's a parameter.
-                    // Cookies are parameters in Montoya.
-                    HttpParameter cookie = HttpParameter.cookieParameter(token.getName(), token.getValue());
-                    current = current.withUpdatedParameters(cookie);
-                    // "Returns a new HttpRequest with the specified parameter updated. If the
-                    // parameter is not present, it is added."
-                    modified = true;
+            HttpRequest beforeRole = current;
+            current = applyAuthProfile(current, role.getTokens());
+            if (!current.toString().equals(beforeRole.toString())) {
+                modified = true;
+                if (appliedRolesCollector != null && role.getName() != null && !role.getName().isBlank()) {
+                    appliedRolesCollector.add(role.getName().trim());
                 }
             }
         }
         return modified ? current : null;
     }
 
-    private HttpRequest applyReplaceRules(HttpRequest request, List<String> appliedRolesCollector) {
+    private HttpRequest applyReplaceRules(HttpRequest request, Set<String> appliedRolesCollector) {
         HttpRequest modifiedRequest = request;
         boolean wasModified = false;
 
@@ -558,20 +543,24 @@ public class RequestHandler implements HttpHandler {
         return wasModified ? modifiedRequest : null;
     }
 
-    private HttpRequest applyRule(HttpRequest request, ReplaceRule rule, List<String> appliedRolesCollector) {
+    private HttpRequest applyRule(HttpRequest request, ReplaceRule rule, Set<String> appliedRolesCollector) {
         HttpRequest current = request;
         boolean modified = false;
 
         if (rule.getTargetRole() != null && !rule.getTargetRole().isEmpty()) {
             UserRole role = findUserRole(rule.getTargetRole());
-            if (role != null) {
+            if (role != null && role.isEnabled()) {
                 HttpRequest withAuth = applyAuthProfile(current, role.getTokens());
                 if (!withAuth.toString().equals(current.toString())) {
                     current = withAuth;
                     modified = true;
-                    appliedRolesCollector.add(role.getName());
-                    api.logging().logToOutput("    ✓ Applied Role: " + role.getName());
                 }
+                if (appliedRolesCollector != null && role.getName() != null && !role.getName().isBlank()) {
+                    appliedRolesCollector.add(role.getName().trim());
+                }
+                api.logging().logToOutput("    ✓ Applied Role: " + role.getName());
+            } else if (role != null) {
+                api.logging().logToOutput("    ✗ Skipped disabled role: " + role.getName());
             }
         }
 
@@ -620,13 +609,15 @@ public class RequestHandler implements HttpHandler {
             String name = token.getName();
             String value = token.getValue();
 
-            // Validate header name
             if (name == null || name.trim().isEmpty()) {
                 continue;
             }
-            String saneName = name.trim();
-            if (saneName.endsWith(":")) {
-                saneName = saneName.substring(0, saneName.length() - 1);
+
+            String saneName = token.getType() == AuthToken.Type.HEADER
+                    ? normalizeHeaderName(name)
+                    : name.trim();
+            if (saneName.isEmpty()) {
+                continue;
             }
 
             switch (token.getType()) {
@@ -655,10 +646,16 @@ public class RequestHandler implements HttpHandler {
     }
 
     private UserRole findUserRole(String name) {
-        if (userRoles == null)
+        if (userRoles == null || name == null) {
             return null;
+        }
+        String expected = name.trim();
+        if (expected.isEmpty()) {
+            return null;
+        }
+
         return userRoles.stream()
-                .filter(r -> r.getName().equals(name))
+                .filter(r -> r.getName() != null && r.getName().trim().equalsIgnoreCase(expected))
                 .findFirst()
                 .orElse(null);
     }
@@ -716,7 +713,9 @@ public class RequestHandler implements HttpHandler {
     }
 
     private HttpRequest modifyRequestHeader(HttpRequest request, ReplaceRule.ReplaceOperation operation) {
-        String match = operation.getMatchPattern() == null ? "" : operation.getMatchPattern().trim();
+        String rawMatch = operation.getMatchPattern() == null ? "" : operation.getMatchPattern().trim();
+        boolean useRegex = operation.isUseRegex();
+        String match = useRegex ? rawMatch : normalizeHeaderName(rawMatch);
         String replace = operation.getReplaceValue() == null ? "" : operation.getReplaceValue();
 
         if (match.isEmpty()) {
@@ -727,7 +726,7 @@ public class RequestHandler implements HttpHandler {
         HttpRequest current = request;
         boolean changed = false;
         for (var header : request.headers()) {
-            boolean matches = operation.isUseRegex()
+            boolean matches = useRegex
                     ? pattern != null && pattern.matcher(header.name()).find()
                     : header.name().equalsIgnoreCase(match);
             if (matches) {
@@ -737,7 +736,7 @@ public class RequestHandler implements HttpHandler {
             }
         }
 
-        if (!changed && !operation.isUseRegex()) {
+        if (!changed && !useRegex) {
             String sanitizedValue = sanitizeHeaderValue(match, replace);
             current = current.withAddedHeader(match, sanitizedValue);
             changed = true;
@@ -946,7 +945,9 @@ public class RequestHandler implements HttpHandler {
     }
 
     private HttpRequest removeHeaderByName(HttpRequest request, ReplaceRule.ReplaceOperation operation) {
-        String match = operation.getMatchPattern();
+        String rawMatch = operation.getMatchPattern();
+        boolean useRegex = operation.isUseRegex();
+        String match = useRegex ? rawMatch : normalizeHeaderName(rawMatch);
         if (match == null || match.isEmpty()) {
             return request;
         }
@@ -954,7 +955,7 @@ public class RequestHandler implements HttpHandler {
         HttpRequest current = request;
         boolean changed = false;
         for (var header : request.headers()) {
-            boolean matches = operation.isUseRegex()
+            boolean matches = useRegex
                     ? pattern != null && pattern.matcher(header.name()).find()
                     : header.name().equalsIgnoreCase(match);
             if (matches) {
@@ -1038,7 +1039,9 @@ public class RequestHandler implements HttpHandler {
     }
 
     private HttpRequest setHeaderValueByName(HttpRequest request, ReplaceRule.ReplaceOperation operation) {
-        String match = operation.getMatchPattern();
+        String rawMatch = operation.getMatchPattern();
+        boolean useRegex = operation.isUseRegex();
+        String match = useRegex ? rawMatch : normalizeHeaderName(rawMatch);
         String newValue = operation.getReplaceValue();
         if (match == null || match.isEmpty()) {
             return request;
@@ -1047,7 +1050,7 @@ public class RequestHandler implements HttpHandler {
         HttpRequest current = request;
         boolean changed = false;
         for (var header : request.headers()) {
-            boolean matches = operation.isUseRegex()
+            boolean matches = useRegex
                     ? pattern != null && pattern.matcher(header.name()).find()
                     : header.name().equalsIgnoreCase(match);
             if (matches) {
@@ -1056,7 +1059,7 @@ public class RequestHandler implements HttpHandler {
                 changed = true;
             }
         }
-        if (!changed && !operation.isUseRegex()) {
+        if (!changed && !useRegex) {
             String sanitizedValue = sanitizeHeaderValue(match, newValue);
             current = current.withAddedHeader(match, sanitizedValue);
             changed = true;
@@ -1098,6 +1101,18 @@ public class RequestHandler implements HttpHandler {
             if (!possibleValue.isEmpty() && possibleName.equalsIgnoreCase(headerName)) {
                 return possibleValue;
             }
+        }
+        return trimmed;
+    }
+
+    private String normalizeHeaderName(String input) {
+        if (input == null) {
+            return "";
+        }
+        String trimmed = input.trim();
+        int colon = trimmed.indexOf(':');
+        if (colon >= 0) {
+            trimmed = trimmed.substring(0, colon).trim();
         }
         return trimmed;
     }
