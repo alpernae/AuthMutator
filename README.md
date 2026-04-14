@@ -57,6 +57,7 @@ Out-of-the-box defaults:
 - Extension enabled: false
 - Intercept enabled: true
 - Auto modify requests: true
+- Role-scoped replacement rules only (strict): false
 - In scope only: false
 - Exclude static files: true
 - Unauthenticated testing: false
@@ -176,6 +177,7 @@ Main toggles and actions:
 - Affect Proxy (modify browser traffic)
 - Preview in Proxy (compute and log differences without modifying live proxy traffic)
 - In Scope Only
+- Strict role-scoped rules
 - Exclude static files
 - Unauthenticated testing
 - Apply rules to unauth request
@@ -200,6 +202,7 @@ Settings provides persistent controls for:
 
 - Scope and static-file exclusion
 - Intercept and auto-modify behavior
+- Strict role-scoped replacement rule mode
 - Unauthenticated workflow flags
 - Retention limit for log rows
 - Per-tool rule application (Proxy/Repeater/Intruder/Scanner)
@@ -251,6 +254,35 @@ What to pay attention to:
 - Regex-enabled operations can fail silently on bad patterns (error logs are emitted).
 - For header-name matching operations, non-regex Match accepts both Authorization and Authorization:.
 - Request Header operation has a special behavior: empty Match plus Replace formatted as Header-Name: value adds a header.
+- Optional strict mode is available in Settings: Role-scoped replacement rules only (strict).
+- In strict mode, global role pre-apply is skipped and a rule with selected role runs only when the request already matches that role context.
+- In strict mode, role context is checked against role tokens: header/cookie name must exist, and token value must match when provided.
+
+Role and replacement behavior matrix:
+
+| Mode | Global enabled roles pre-applied | Selected role on rule | Rule can run when request does not already match target role tokens | Typical use |
+| --- | --- | --- | --- | --- |
+| Strict off (default) | Yes | Applied when the rule runs | Yes | Role simulation and privilege escalation testing from one baseline request |
+| Strict on | No | Applied only if request already matches target role context | No | Validation that mutations stay inside an already-authenticated role context |
+
+Member -> manager -> admin testing matrix:
+
+| Goal | Strict mode | Enabled roles | Enabled replacement rules | Expected result |
+| --- | --- | --- | --- | --- |
+| Baseline member request | Off or On | Member only | None | Original member response only |
+| Simulate manager from member request | Off | Manager only | Manager rule only | Manager tokens + manager mutation are applied |
+| Simulate admin from member request | Off | Admin only | Admin rule only | Admin tokens + admin mutation are applied |
+| Validate manager-only context without escalation | On | Manager only | Manager rule only | Rule applies only when request already has manager token context |
+| Validate admin-only context without escalation | On | Admin only | Admin rule only | Rule applies only when request already has admin token context |
+
+Recommended test workflow:
+
+1. Start from one captured member request in Repeater.
+2. Run a baseline request with rules disabled.
+3. Enable only manager role and manager rule, send once, compare status/body/diff.
+4. Disable manager items, enable only admin role and admin rule, send once, compare again.
+5. Enable strict mode only when you want context-lock validation, not cross-role simulation.
+6. Avoid enabling member, manager, and admin together during mutation tests to prevent token overwrites.
 
 Recommended rule style:
 
@@ -427,6 +459,7 @@ Rule appears not to work:
 - Confirm rule is enabled.
 - Confirm role referenced by rule exists and is enabled.
 - Confirm match pattern actually matches request content.
+- If strict role-scoped mode is enabled, confirm the request already matches the target role token context.
 - Check regex syntax errors in Burp extension output logs.
 
 Unauth column/variant missing:

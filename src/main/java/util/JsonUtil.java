@@ -214,6 +214,7 @@ public class JsonUtil {
         obj.putValue("onlyInScope", config.isOnlyInScope());
         obj.putValue("interceptEnabled", config.isInterceptEnabled());
         obj.putValue("autoModifyRequests", config.isAutoModifyRequests());
+        obj.putValue("roleScopedReplacementRules", config.isRoleScopedReplacementRules());
         obj.putValue("unauthenticatedTesting", config.isUnauthenticatedTesting());
         obj.putValue("applyRulesToUnauthenticatedRequest", config.isApplyRulesToUnauthenticatedRequest());
         obj.putValue("applyToProxy", config.isApplyToProxy());
@@ -233,6 +234,7 @@ public class JsonUtil {
         config.setOnlyInScope(obj.optBoolean("onlyInScope", false));
         config.setInterceptEnabled(obj.optBoolean("interceptEnabled", true));
         config.setAutoModifyRequests(obj.optBoolean("autoModifyRequests", true));
+        config.setRoleScopedReplacementRules(obj.optBoolean("roleScopedReplacementRules", false));
         config.setUnauthenticatedTesting(obj.optBoolean("unauthenticatedTesting", false));
         config.setApplyRulesToUnauthenticatedRequest(obj.optBoolean("applyRulesToUnauthenticatedRequest", false));
         config.setApplyToProxy(obj.optBoolean("applyToProxy", false));

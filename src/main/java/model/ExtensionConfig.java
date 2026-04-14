@@ -7,6 +7,7 @@ public class ExtensionConfig {
     private boolean onlyInScope;
     private boolean interceptEnabled;
     private boolean autoModifyRequests;
+    private boolean roleScopedReplacementRules;
     private boolean unauthenticatedTesting;
     private boolean applyRulesToUnauthenticatedRequest;
     private boolean excludeStaticFiles;
@@ -26,6 +27,7 @@ public class ExtensionConfig {
         this.onlyInScope = false;
         this.interceptEnabled = true;
     this.autoModifyRequests = true;
+        this.roleScopedReplacementRules = false;
     this.unauthenticatedTesting = false;
     this.applyRulesToUnauthenticatedRequest = false;
     this.excludeStaticFiles = true;
@@ -61,6 +63,14 @@ public class ExtensionConfig {
 
     public void setAutoModifyRequests(boolean autoModifyRequests) {
         this.autoModifyRequests = autoModifyRequests;
+    }
+
+    public boolean isRoleScopedReplacementRules() {
+        return roleScopedReplacementRules;
+    }
+
+    public void setRoleScopedReplacementRules(boolean roleScopedReplacementRules) {
+        this.roleScopedReplacementRules = roleScopedReplacementRules;
     }
 
     public boolean isUnauthenticatedTesting() {

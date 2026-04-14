@@ -11,6 +11,7 @@ public class QuickControlsPanel extends JPanel {
     private JCheckBox affectProxyCheckbox;
     private JCheckBox previewProxyCheckbox;
     private JCheckBox onlyInScopeCheckbox;
+    private JCheckBox strictRoleScopedRulesCheckbox;
     private JCheckBox unauthTestingCheckbox;
     private JCheckBox applyRulesToUnauthCheckbox;
     private JCheckBox excludeStaticFilesCheckbox;
@@ -59,6 +60,15 @@ public class QuickControlsPanel extends JPanel {
             signalConfigChanged();
         });
 
+        strictRoleScopedRulesCheckbox = new JCheckBox("Strict role-scoped rules");
+        strictRoleScopedRulesCheckbox.setSelected(config.isRoleScopedReplacementRules());
+        strictRoleScopedRulesCheckbox
+                .setToolTipText("Only run target-role rules when request already matches target role token context");
+        strictRoleScopedRulesCheckbox.addActionListener(e -> {
+            config.setRoleScopedReplacementRules(strictRoleScopedRulesCheckbox.isSelected());
+            signalConfigChanged();
+        });
+
         excludeStaticFilesCheckbox = new JCheckBox("Exclude static files");
         excludeStaticFilesCheckbox.setSelected(config.isExcludeStaticFiles());
         excludeStaticFilesCheckbox.setToolTipText("Skip images, CSS, JS, fonts, audio, video files");
@@ -90,6 +100,7 @@ public class QuickControlsPanel extends JPanel {
         leftPanel.add(affectProxyCheckbox);
         leftPanel.add(previewProxyCheckbox);
         leftPanel.add(onlyInScopeCheckbox);
+        leftPanel.add(strictRoleScopedRulesCheckbox);
         leftPanel.add(excludeStaticFilesCheckbox);
         leftPanel.add(unauthTestingCheckbox);
         leftPanel.add(applyRulesToUnauthCheckbox);
@@ -166,6 +177,7 @@ public class QuickControlsPanel extends JPanel {
         affectProxyCheckbox.setSelected(config.isApplyToProxy());
         previewProxyCheckbox.setSelected(config.isPreviewInProxy());
         onlyInScopeCheckbox.setSelected(config.isOnlyInScope());
+        strictRoleScopedRulesCheckbox.setSelected(config.isRoleScopedReplacementRules());
         excludeStaticFilesCheckbox.setSelected(config.isExcludeStaticFiles());
         unauthTestingCheckbox.setSelected(config.isUnauthenticatedTesting());
         applyRulesToUnauthCheckbox.setSelected(config.isApplyRulesToUnauthenticatedRequest());
@@ -191,6 +203,7 @@ public class QuickControlsPanel extends JPanel {
         affectProxyCheckbox.setEnabled(extensionEnabled);
         previewProxyCheckbox.setEnabled(extensionEnabled);
         onlyInScopeCheckbox.setEnabled(extensionEnabled);
+        strictRoleScopedRulesCheckbox.setEnabled(extensionEnabled);
         excludeStaticFilesCheckbox.setEnabled(extensionEnabled);
         unauthTestingCheckbox.setEnabled(extensionEnabled);
         applyRulesToUnauthCheckbox.setEnabled(extensionEnabled && unauthTestingCheckbox.isSelected());

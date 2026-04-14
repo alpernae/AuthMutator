@@ -14,6 +14,7 @@ public class SettingsPanel extends JPanel {
     private JCheckBox onlyInScopeCheckbox;
     private JCheckBox interceptEnabledCheckbox;
     private JCheckBox autoModifyCheckbox;
+    private JCheckBox roleScopedRulesCheckbox;
     private JCheckBox applyToProxyCheckbox;
     private JCheckBox applyToRepeaterCheckbox;
     private JCheckBox applyToIntruderCheckbox;
@@ -97,6 +98,17 @@ public class SettingsPanel extends JPanel {
             notifyConfigChanged();
         });
         interceptPanel.add(autoModifyCheckbox);
+
+        roleScopedRulesCheckbox = new JCheckBox("Role-scoped replacement rules only (strict)");
+        roleScopedRulesCheckbox.setSelected(config.isRoleScopedReplacementRules());
+        roleScopedRulesCheckbox.setToolTipText(
+                "When enabled, global role pre-apply is skipped and target-role rules run only when the request already matches that role context.");
+        roleScopedRulesCheckbox.addActionListener(e -> {
+            config.setRoleScopedReplacementRules(roleScopedRulesCheckbox.isSelected());
+            api.logging().logToOutput("Role-scoped replacement rules: " + config.isRoleScopedReplacementRules());
+            notifyConfigChanged();
+        });
+        interceptPanel.add(roleScopedRulesCheckbox);
 
         unauthenticatedTestingCheckbox = new JCheckBox("Unauthenticated testing (strip cookies)");
         unauthenticatedTestingCheckbox.setSelected(config.isUnauthenticatedTesting());
@@ -223,6 +235,9 @@ public class SettingsPanel extends JPanel {
         excludeStaticFilesCheckbox.setSelected(config.isExcludeStaticFiles());
         interceptEnabledCheckbox.setSelected(config.isInterceptEnabled());
         autoModifyCheckbox.setSelected(config.isAutoModifyRequests());
+        if (roleScopedRulesCheckbox != null) {
+            roleScopedRulesCheckbox.setSelected(config.isRoleScopedReplacementRules());
+        }
         applyToProxyCheckbox.setSelected(config.isApplyToProxy());
         applyToRepeaterCheckbox.setSelected(config.isApplyToRepeater());
         applyToIntruderCheckbox.setSelected(config.isApplyToIntruder());

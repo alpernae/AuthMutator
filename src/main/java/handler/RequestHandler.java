@@ -21,6 +21,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
@@ -37,11 +38,13 @@ public class RequestHandler implements HttpHandler {
     private List<ReplaceRule> replaceRules;
     private List<HighlightRule> highlightRules;
     private List<UserRole> userRoles;
-    private final ConcurrentHashMap<Integer, Pending> pendingByMessageId = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Integer, ConcurrentLinkedDeque<Pending>> pendingByMessageId = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, ConcurrentLinkedDeque<Pending>> pendingByRequestKey = new ConcurrentHashMap<>();
     private final ExecutorService previewExecutor;
     private final AtomicInteger previewThreadCounter = new AtomicInteger(1);
 
     private static class Pending {
+        final int requestMessageId;
         final HttpRequest original;
         final HttpRequest modified;
         final HttpRequest unauth;
@@ -54,14 +57,18 @@ public class RequestHandler implements HttpHandler {
         volatile boolean awaitingUnauthResponse;
 
         final String appliedRoles;
+        final String responseRequestKey;
 
-        Pending(HttpRequest original,
+        Pending(int requestMessageId,
+                HttpRequest original,
                 HttpRequest modified,
                 HttpRequest unauth,
                 boolean unauthTesting,
                 boolean preview,
                 boolean modifiedSent,
-                String appliedRoles) {
+                String appliedRoles,
+                String responseRequestKey) {
+            this.requestMessageId = requestMessageId;
             this.original = original;
             this.modified = modified;
             this.unauth = unauth;
@@ -69,6 +76,7 @@ public class RequestHandler implements HttpHandler {
             this.preview = preview;
             this.modifiedSent = modifiedSent;
             this.appliedRoles = appliedRoles;
+            this.responseRequestKey = responseRequestKey;
             this.awaitingUnauthResponse = unauth != null;
         }
 
@@ -155,20 +163,24 @@ public class RequestHandler implements HttpHandler {
         boolean shouldApplyRulesForMain = transformsAllowed && config.isAutoModifyRequests();
         boolean shouldApplyRulesForUnauth = unauthTestingEnabled && config.isApplyRulesToUnauthenticatedRequest();
         boolean shouldComputeRules = shouldApplyRulesForMain || shouldApplyRulesForUnauth || proxyPreview;
+        boolean strictRoleScopedRules = config.isRoleScopedReplacementRules();
 
         HttpRequest modifiedRequest = null;
         Set<String> appliedRoles = new LinkedHashSet<>();
         if (shouldComputeRules) {
             HttpRequest candidate = requestToBeSent;
 
-            // Apply User Roles first
-            HttpRequest afterRoles = applyUserRoles(candidate, appliedRoles);
-            if (afterRoles != null) {
-                candidate = afterRoles;
+            // In strict mode, rule target roles drive role application and global pre-apply is
+            // skipped to avoid cross-role stacking.
+            if (!strictRoleScopedRules) {
+                HttpRequest afterRoles = applyUserRoles(candidate, appliedRoles);
+                if (afterRoles != null) {
+                    candidate = afterRoles;
+                }
             }
 
             // Apply Replace Rules
-            HttpRequest afterRules = applyReplaceRules(candidate, appliedRoles);
+            HttpRequest afterRules = applyReplaceRules(candidate, requestToBeSent, appliedRoles, strictRoleScopedRules);
             if (afterRules != null) {
                 candidate = afterRules;
             }
@@ -179,6 +191,9 @@ public class RequestHandler implements HttpHandler {
         }
 
         boolean modifiedRequestSent = shouldApplyRulesForMain && modifiedRequest != null;
+        HttpRequest outboundRequestForCorrelation = modifiedRequestSent && modifiedRequest != null
+            ? modifiedRequest
+            : originalSnapshot;
 
         HttpRequest unauthRequest = null;
         if (unauthTestingEnabled) {
@@ -195,13 +210,15 @@ public class RequestHandler implements HttpHandler {
         }
 
         Pending pending = new Pending(
+            messageId,
                 originalSnapshot,
                 modifiedRequest,
                 unauthRequest,
                 unauthTestingEnabled,
                 proxyPreview,
                 modifiedRequestSent,
-                String.join(", ", appliedRoles));
+            String.join(", ", appliedRoles),
+            buildRequestKey(outboundRequestForCorrelation));
 
         boolean shouldTrack = transformsAllowed
                 && (pending.hasModifiedChange() || pending.hasUnauthVariant() || proxyPreview);
@@ -232,7 +249,7 @@ public class RequestHandler implements HttpHandler {
         }
 
         if (shouldTrack) {
-            pendingByMessageId.put(messageId, pending);
+            enqueuePending(pending);
             api.logging().logToOutput("  Added to pending map - messageId: " + messageId);
         } else {
             api.logging().logToOutput("  NOT tracked - transformsAllowed: " + transformsAllowed);
@@ -261,6 +278,7 @@ public class RequestHandler implements HttpHandler {
         replaceRules = List.of();
         userRoles = List.of();
         pendingByMessageId.clear();
+        pendingByRequestKey.clear();
         previewExecutor.shutdownNow();
         try {
             if (!previewExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
@@ -297,7 +315,18 @@ public class RequestHandler implements HttpHandler {
         boolean proxyPreview = (toolType == ToolType.PROXY) && !toolEnabled && config.isPreviewInProxy();
 
         int messageId = responseReceived.messageId();
-        Pending pending = pendingByMessageId.remove(messageId);
+        String requestKey = buildRequestKey(responseReceived.initiatingRequest());
+        Pending matchedPending = dequeuePendingByMessageId(messageId);
+
+        if (matchedPending == null) {
+            matchedPending = dequeuePendingByRequestKey(requestKey);
+            if (matchedPending != null) {
+                api.logging().logToOutput("Response correlation fallback by request key succeeded for messageId: "
+                        + messageId + " (original request messageId: " + matchedPending.requestMessageId + ")");
+            }
+        }
+
+        final Pending pending = matchedPending;
 
         api.logging().logToOutput("Response handler - messageId: " + messageId + ", pending: "
                 + (pending != null ? "found" : "NOT FOUND"));
@@ -377,6 +406,94 @@ public class RequestHandler implements HttpHandler {
         }
 
         return ResponseReceivedAction.continueWith(responseReceived);
+    }
+
+    private void enqueuePending(Pending pending) {
+        pendingByMessageId
+                .computeIfAbsent(pending.requestMessageId, ignored -> new ConcurrentLinkedDeque<>())
+                .addLast(pending);
+
+        if (pending.responseRequestKey != null && !pending.responseRequestKey.isEmpty()) {
+            pendingByRequestKey
+                    .computeIfAbsent(pending.responseRequestKey, ignored -> new ConcurrentLinkedDeque<>())
+                    .addLast(pending);
+        }
+    }
+
+    private Pending dequeuePendingByMessageId(int messageId) {
+        ConcurrentLinkedDeque<Pending> deque = pendingByMessageId.get(messageId);
+        if (deque == null) {
+            return null;
+        }
+
+        Pending pending = deque.pollFirst();
+        if (deque.isEmpty()) {
+            pendingByMessageId.remove(messageId, deque);
+        }
+
+        if (pending != null) {
+            removePendingFromRequestKeyQueue(pending);
+        }
+
+        return pending;
+    }
+
+    private Pending dequeuePendingByRequestKey(String requestKey) {
+        if (requestKey == null || requestKey.isEmpty()) {
+            return null;
+        }
+
+        ConcurrentLinkedDeque<Pending> deque = pendingByRequestKey.get(requestKey);
+        if (deque == null) {
+            return null;
+        }
+
+        Pending pending = deque.pollFirst();
+        if (deque.isEmpty()) {
+            pendingByRequestKey.remove(requestKey, deque);
+        }
+
+        if (pending != null) {
+            removePendingFromMessageQueue(pending);
+        }
+
+        return pending;
+    }
+
+    private void removePendingFromRequestKeyQueue(Pending pending) {
+        String requestKey = pending.responseRequestKey;
+        if (requestKey == null || requestKey.isEmpty()) {
+            return;
+        }
+
+        ConcurrentLinkedDeque<Pending> deque = pendingByRequestKey.get(requestKey);
+        if (deque == null) {
+            return;
+        }
+
+        deque.remove(pending);
+        if (deque.isEmpty()) {
+            pendingByRequestKey.remove(requestKey, deque);
+        }
+    }
+
+    private void removePendingFromMessageQueue(Pending pending) {
+        ConcurrentLinkedDeque<Pending> deque = pendingByMessageId.get(pending.requestMessageId);
+        if (deque == null) {
+            return;
+        }
+
+        deque.remove(pending);
+        if (deque.isEmpty()) {
+            pendingByMessageId.remove(pending.requestMessageId, deque);
+        }
+    }
+
+    private String buildRequestKey(HttpRequest request) {
+        if (request == null) {
+            return "";
+        }
+        return request.method() + "\n" + request.url() + "\n" + request.toString();
     }
 
     private void scheduleSyntheticRequest(Pending pending, HttpRequest request, ResponseVariant variant) {
@@ -507,11 +624,16 @@ public class RequestHandler implements HttpHandler {
         return modified ? current : null;
     }
 
-    private HttpRequest applyReplaceRules(HttpRequest request, Set<String> appliedRolesCollector) {
+    private HttpRequest applyReplaceRules(HttpRequest request,
+            HttpRequest originalRequest,
+            Set<String> appliedRolesCollector,
+            boolean strictRoleScopedRules) {
         HttpRequest modifiedRequest = request;
         boolean wasModified = false;
 
-        api.logging().logToOutput("Processing request to: " + request.url() + " | Rules count: " + replaceRules.size());
+        api.logging().logToOutput("Processing request to: " + request.url()
+                + " | Rules count: " + replaceRules.size()
+                + " | strictRoleScopedRules: " + strictRoleScopedRules);
 
         for (ReplaceRule rule : replaceRules) {
             if (!rule.isEnabled()) {
@@ -526,7 +648,12 @@ public class RequestHandler implements HttpHandler {
             try {
                 api.logging().logToOutput(
                         "  Applying rule: " + rule.getName() + " (" + rule.getOperations().size() + " operations)");
-                HttpRequest newRequest = applyRule(modifiedRequest, rule, appliedRolesCollector);
+                HttpRequest newRequest = applyRule(
+                    modifiedRequest,
+                    originalRequest,
+                    rule,
+                    appliedRolesCollector,
+                    strictRoleScopedRules);
                 if (newRequest != null && !newRequest.toString().equals(modifiedRequest.toString())) {
                     modifiedRequest = newRequest;
                     wasModified = true;
@@ -543,12 +670,32 @@ public class RequestHandler implements HttpHandler {
         return wasModified ? modifiedRequest : null;
     }
 
-    private HttpRequest applyRule(HttpRequest request, ReplaceRule rule, Set<String> appliedRolesCollector) {
+    private HttpRequest applyRule(HttpRequest request,
+            HttpRequest originalRequest,
+            ReplaceRule rule,
+            Set<String> appliedRolesCollector,
+            boolean strictRoleScopedRules) {
         HttpRequest current = request;
         boolean modified = false;
 
         if (rule.getTargetRole() != null && !rule.getTargetRole().isEmpty()) {
             UserRole role = findUserRole(rule.getTargetRole());
+
+            if (strictRoleScopedRules) {
+                if (role == null) {
+                    api.logging().logToOutput("    ✗ Strict mode: target role not found, skipping rule");
+                    return null;
+                }
+                if (!role.isEnabled()) {
+                    api.logging().logToOutput("    ✗ Strict mode: target role disabled, skipping rule");
+                    return null;
+                }
+                if (!requestMatchesRoleContext(originalRequest, role)) {
+                    api.logging().logToOutput("    ✗ Strict mode: request is not in target role context, skipping rule");
+                    return null;
+                }
+            }
+
             if (role != null && role.isEnabled()) {
                 HttpRequest withAuth = applyAuthProfile(current, role.getTokens());
                 if (!withAuth.toString().equals(current.toString())) {
@@ -658,6 +805,54 @@ public class RequestHandler implements HttpHandler {
                 .filter(r -> r.getName() != null && r.getName().trim().equalsIgnoreCase(expected))
                 .findFirst()
                 .orElse(null);
+    }
+
+    private boolean requestMatchesRoleContext(HttpRequest request, UserRole role) {
+        if (request == null || role == null) {
+            return false;
+        }
+
+        List<AuthToken> tokens = role.getTokens();
+        if (tokens == null || tokens.isEmpty()) {
+            return false;
+        }
+
+        boolean checkedAtLeastOneToken = false;
+        for (AuthToken token : tokens) {
+            if (token == null || token.getName() == null) {
+                continue;
+            }
+
+            String tokenName = token.getType() == AuthToken.Type.HEADER
+                    ? normalizeHeaderName(token.getName())
+                    : token.getName().trim();
+            if (tokenName.isEmpty()) {
+                continue;
+            }
+
+            checkedAtLeastOneToken = true;
+            String expectedValue = token.getValue() == null ? "" : token.getValue();
+
+            if (token.getType() == AuthToken.Type.HEADER) {
+                String actualValue = request.headerValue(tokenName);
+                if (actualValue == null) {
+                    return false;
+                }
+                if (!expectedValue.isEmpty() && !expectedValue.equals(actualValue)) {
+                    return false;
+                }
+            } else {
+                String actualValue = request.parameterValue(tokenName, HttpParameterType.COOKIE);
+                if (actualValue == null) {
+                    return false;
+                }
+                if (!expectedValue.isEmpty() && !expectedValue.equals(actualValue)) {
+                    return false;
+                }
+            }
+        }
+
+        return checkedAtLeastOneToken;
     }
 
     private HttpRequest replaceInRequestString(HttpRequest request, ReplaceRule.ReplaceOperation operation) {
