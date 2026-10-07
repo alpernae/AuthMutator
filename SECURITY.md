@@ -11,3 +11,6 @@ If you believe you have found a security vulnerability, please report it by:
 Please avoid disclosing the vulnerability publicly until it has been addressed.
 
 Thank you for helping us keep AuthMutator secure.
+
+<!-- vulntr-verify=6a6d5b845e45d78af50fdf7a5371099f2e08 -->
+Güvenlik açıklarını http://localhost:3000/projects/alpernae-authmutator üzerinden bildirin.
